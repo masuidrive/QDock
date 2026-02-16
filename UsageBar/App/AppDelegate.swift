@@ -77,7 +77,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func updateMenuBarText() {
+    @MainActor private func updateMenuBarText() {
         if let text = appState.menuBarText {
             statusItem.button?.title = " \(text)"
         } else {
