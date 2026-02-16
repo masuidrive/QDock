@@ -31,8 +31,14 @@ struct ProviderSettingCard: View {
         case failure(String)
     }
 
-    private var isLocalProvider: Bool {
-        provider.id == "claude-code-local"
+    /// Providers that auto-detect without API key
+    private var isAutoDetectedProvider: Bool {
+        ["claude-code-local", "cursor", "codex"].contains(provider.id)
+    }
+
+    /// Providers that need extra config fields
+    private var needsExtraConfig: Bool {
+        ["copilot", "windsurf"].contains(provider.id)
     }
 
     var body: some View {
@@ -47,7 +53,7 @@ struct ProviderSettingCard: View {
                     .font(.callout)
                     .fontWeight(.medium)
 
-                if isLocalProvider {
+                if isAutoDetectedProvider && provider.isConfigured {
                     Text("AUTO")
                         .font(.system(size: 8, weight: .bold))
                         .padding(.horizontal, 4)
@@ -73,11 +79,21 @@ struct ProviderSettingCard: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            if isLocalProvider {
-                // Claude Code local — show status instead of API key input
+            // Provider-specific config views
+            switch provider.id {
+            case "claude-code-local":
                 claudeCodeStatusView
-            } else {
-                // API-based providers — show key input
+            case "cursor":
+                cursorStatusView
+            case "codex":
+                codexStatusView
+            case "copilot":
+                copilotConfigView
+                apiKeyInputView
+            case "windsurf":
+                windsurfStatusView
+                apiKeyInputView
+            default:
                 apiKeyInputView
             }
         }
@@ -260,6 +276,213 @@ struct ProviderSettingCard: View {
         case .cliBinary: return "CLI found, awaiting sessions"
         case .keychainOnly: return "Keychain only (API fallback)"
         case .none: return "Not detected"
+        }
+    }
+
+    // MARK: - Cursor Status View
+
+    @ViewBuilder
+    private var cursorStatusView: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            // Installation status
+            HStack(spacing: 6) {
+                Image(systemName: CursorAuthReader.isInstalled ? "checkmark.circle.fill" : "xmark.circle")
+                    .foregroundStyle(CursorAuthReader.isInstalled ? .green : .orange)
+                    .font(.caption)
+                Text(CursorAuthReader.isInstalled ? "Cursor installed" : "Cursor not found")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            // Auth status
+            if CursorAuthReader.accessToken != nil {
+                HStack(spacing: 6) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                        .font(.caption)
+                    Text("Logged in")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                if let userId = CursorAuthReader.userId {
+                    HStack(spacing: 6) {
+                        Image(systemName: "person.circle")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text(userId)
+                            .font(.system(.caption2, design: .monospaced))
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                }
+            } else if CursorAuthReader.isInstalled {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .foregroundStyle(.orange)
+                        .font(.caption)
+                    Text("Not logged in — open Cursor and sign in")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+            }
+
+            // Data source
+            HStack(spacing: 6) {
+                Image(systemName: "folder")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(CursorAuthReader.dataDir.path)
+                    .font(.system(.caption2, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+        }
+    }
+
+    // MARK: - Codex Status View
+
+    @ViewBuilder
+    private var codexStatusView: some View {
+        let codexDir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".codex")
+        let isInstalled = FileManager.default.fileExists(atPath: codexDir.path)
+
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: isInstalled ? "checkmark.circle.fill" : "xmark.circle")
+                    .foregroundStyle(isInstalled ? .green : .orange)
+                    .font(.caption)
+                Text(isInstalled ? "Codex CLI installed" : "Codex CLI not found")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if isInstalled {
+                HStack(spacing: 6) {
+                    Image(systemName: "folder")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text("~/.codex/")
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                }
+
+                // Check history file
+                let historyPath = codexDir.appendingPathComponent("history.jsonl")
+                let hasHistory = FileManager.default.fileExists(atPath: historyPath.path)
+
+                HStack(spacing: 6) {
+                    Image(systemName: hasHistory ? "doc.text.fill" : "doc.text")
+                        .font(.caption)
+                        .foregroundStyle(hasHistory ? .green : .orange)
+                    Text(hasHistory ? "Session history available" : "No history.jsonl yet")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                if let config = CodexConfig.read(), let model = config.model {
+                    HStack(spacing: 6) {
+                        Image(systemName: "cpu")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text("Default model: \(model)")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Copilot Config View
+
+    @State private var copilotOrg: String = ""
+    @State private var copilotUsername: String = ""
+
+    @ViewBuilder
+    private var copilotConfigView: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Configure at least one: organization name (for team metrics) or GitHub username (for individual billing).")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+
+            HStack(spacing: 6) {
+                Text("Org:")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 60, alignment: .trailing)
+                TextField("my-org", text: $copilotOrg)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(.caption, design: .monospaced))
+            }
+
+            HStack(spacing: 6) {
+                Text("Username:")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 60, alignment: .trailing)
+                TextField("octocat", text: $copilotUsername)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(.caption, design: .monospaced))
+            }
+
+            Button("Save Config") {
+                if let copilot = provider as? CopilotProvider {
+                    copilot.organizationName = copilotOrg
+                    copilot.username = copilotUsername
+                    appState.providerManager.objectWillChange.send()
+                }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .disabled(copilotOrg.isEmpty && copilotUsername.isEmpty)
+        }
+        .onAppear {
+            if let copilot = provider as? CopilotProvider {
+                copilotOrg = copilot.organizationName
+                copilotUsername = copilot.username
+            }
+        }
+    }
+
+    // MARK: - Windsurf Status View
+
+    @ViewBuilder
+    private var windsurfStatusView: some View {
+        let isInstalled = WindsurfProvider.isInstalled
+
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: isInstalled ? "checkmark.circle.fill" : "xmark.circle")
+                    .foregroundStyle(isInstalled ? .green : .orange)
+                    .font(.caption)
+                Text(isInstalled ? "Windsurf installed" : "Windsurf not found")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if isInstalled {
+                HStack(spacing: 6) {
+                    Image(systemName: "folder")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text("~/.codeium/windsurf/")
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                }
+
+                HStack(spacing: 4) {
+                    Image(systemName: "info.circle")
+                        .font(.caption2)
+                        .foregroundStyle(.blue)
+                    Text("Enterprise service key required for detailed analytics")
+                        .font(.caption2)
+                        .foregroundStyle(.blue)
+                }
+            }
         }
     }
 

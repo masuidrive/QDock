@@ -37,16 +37,44 @@ final class ProviderManager: ObservableObject {
     private func setupDefaultProviders() {
         var result: [any UsageProvider] = []
 
-        // Auto-detect Claude Code installation — no API key needed
+        // === Auto-detected local providers (no API key needed) ===
+
+        // Claude Code — reads from ~/.claude/
         let claudeCode = ClaudeCodeProvider()
         if claudeCode.isConfigured {
             claudeCode.isEnabled = true
             result.append(claudeCode)
         }
 
-        // API-based providers (require manual key setup)
+        // Cursor — reads auth from local SQLite, fetches from cursor.com
+        let cursor = CursorProvider()
+        if cursor.isConfigured {
+            cursor.isEnabled = true
+            result.append(cursor)
+        }
+
+        // OpenAI Codex CLI — reads from ~/.codex/
+        let codex = CodexProvider()
+        if codex.isConfigured {
+            codex.isEnabled = true
+            result.append(codex)
+        }
+
+        // === API-based providers (require manual key setup) ===
+
         result.append(AnthropicProvider())
         result.append(OpenAIProvider())
+
+        // GitHub Copilot — requires PAT + org name
+        result.append(CopilotProvider())
+
+        // Windsurf — Enterprise API key or local detection
+        let windsurf = WindsurfProvider()
+        if windsurf.isInstalled {
+            windsurf.isEnabled = true
+        }
+        result.append(windsurf)
+
         result.append(OpenRouterProvider())
 
         providers = result
