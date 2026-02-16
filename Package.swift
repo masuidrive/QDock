@@ -11,8 +11,8 @@ let package = Package(
         .executableTarget(
             name: "UsageBar",
             path: "UsageBar",
-            resources: [
-                .process("Resources")
+            exclude: [
+                "Resources/Info.plist"
             ]
         )
     ]
