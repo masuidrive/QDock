@@ -97,11 +97,34 @@ struct ProviderSettingCard: View {
 
     // MARK: - Claude Code Status View
 
+    @State private var customPath: String = ""
+    @State private var showCustomPath: Bool = false
+
     @ViewBuilder
     private var claudeCodeStatusView: some View {
         let ccProvider = provider as? ClaudeCodeProvider
 
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
+            // Detection strategy badge
+            if let result = ccProvider?.detectionResult {
+                HStack(spacing: 6) {
+                    Image(systemName: result.isDetected ? "checkmark.circle.fill" : "exclamationmark.triangle")
+                        .foregroundStyle(result.isDetected ? .green : .orange)
+                        .font(.caption)
+                    Text(strategyLabel(result.strategy))
+                        .font(.caption)
+                        .fontWeight(.medium)
+                        .foregroundStyle(result.isDetected ? .green : .orange)
+                }
+
+                Text(result.message)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Divider()
+
             // Login status
             HStack(spacing: 6) {
                 Image(systemName: ccProvider?.isLoggedIn == true ? "checkmark.circle.fill" : "xmark.circle")
@@ -143,15 +166,100 @@ struct ProviderSettingCard: View {
                 }
             }
 
-            // Data path
-            HStack(spacing: 6) {
-                Image(systemName: "folder")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Text("~/.claude/projects/")
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(.tertiary)
+            // Data source info
+            if let result = ccProvider?.detectionResult {
+                HStack(spacing: 6) {
+                    Image(systemName: "folder")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(result.configDir?.path ?? "Not found")
+                        .font(.system(.caption2, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+
+                if let cli = result.cliPath {
+                    HStack(spacing: 6) {
+                        Image(systemName: "terminal")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text(cli)
+                            .font(.system(.caption2, design: .monospaced))
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+
+                // Fallback indicator
+                if !result.hasSessions && result.hasOAuthCredentials {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                        Text("Using API fallback (no local session files)")
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                    }
+                    .padding(.top, 2)
+                }
             }
+
+            Divider()
+
+            // Custom path override
+            DisclosureGroup("Custom data path", isExpanded: $showCustomPath) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Override the auto-detected path if Claude Code data is in a non-standard location.")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+
+                    HStack(spacing: 6) {
+                        TextField("~/.claude", text: $customPath)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(.caption, design: .monospaced))
+
+                        Button("Apply") {
+                            ccProvider?.setCustomPath(customPath)
+                            appState.providerManager.objectWillChange.send()
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .disabled(customPath.isEmpty)
+
+                        Button("Reset") {
+                            customPath = ""
+                            ccProvider?.setCustomPath("")
+                            appState.providerManager.objectWillChange.send()
+                        }
+                        .buttonStyle(.plain)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
+
+                    if let envVar = ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"] {
+                        Text("CLAUDE_CONFIG_DIR: \(envVar)")
+                            .font(.system(.caption2, design: .monospaced))
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                .padding(.top, 4)
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        .onAppear {
+            customPath = ccProvider?.detector.customConfigPath ?? ""
+        }
+    }
+
+    private func strategyLabel(_ strategy: ClaudeCodeDetector.Strategy) -> String {
+        switch strategy {
+        case .defaultPath: return "Detected at ~/.claude"
+        case .envVariable: return "Detected via CLAUDE_CONFIG_DIR"
+        case .customPath: return "Using custom path"
+        case .cliBinary: return "CLI found, awaiting sessions"
+        case .keychainOnly: return "Keychain only (API fallback)"
+        case .none: return "Not detected"
         }
     }
 

@@ -6,6 +6,7 @@ import SwiftUI
 final class AppState: ObservableObject {
     @Published var providerManager = ProviderManager()
     @Published var refreshService = RefreshService()
+    @Published var sessionWatcher = SessionFileWatcher()
     @Published var selectedProvider: (any UsageProvider)?
     @Published var showingSettings = false
     @Published var showCostInMenuBar = false
@@ -23,6 +24,15 @@ final class AppState: ObservableObject {
         }
 
         refreshService.updateInterval(refreshIntervalSeconds)
+
+        // Watch for Claude Code session file changes
+        sessionWatcher.configure { [weak self] in
+            // Only refresh Claude Code provider when file changes detected
+            if let ccProvider = self?.providerManager.claudeCodeProvider {
+                await self?.providerManager.fetchUsage(for: ccProvider)
+            }
+        }
+        sessionWatcher.startWatching()
     }
 
     /// Initial data load
