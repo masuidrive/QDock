@@ -3,6 +3,15 @@
 ## Vision
 A lightweight, native macOS menu bar app that lets you instantly see your AI API usage (tokens, costs) across multiple providers — Claude Code, Cursor, Antigravity, OpenAI, and more.
 
+### Zero-Config Claude Code Integration
+**No API key needed!** UsageBar automatically detects your Claude Code installation and reads usage data directly from local files:
+- OAuth credentials from macOS Keychain (`"Claude Code-credentials"`)
+- Session transcripts from `~/.claude/projects/<path>/<uuid>.jsonl`
+- Aggregated stats from `~/.claude/stats-cache.json`
+- Account info from `~/.claude.json`
+
+When you open UsageBar, it instantly shows your Claude Code sessions with per-session token counts, model breakdown, git branch, project name, and estimated cost — all without any setup.
+
 ---
 
 ## Architecture Overview

@@ -13,6 +13,15 @@ struct ProviderDetailView: View {
         return appState.providerManager.usageByProvider[id]
     }
 
+    /// Check if this is the Claude Code local provider
+    private var isClaudeCode: Bool {
+        provider?.id == "claude-code-local"
+    }
+
+    private var claudeProvider: ClaudeCodeProvider? {
+        provider as? ClaudeCodeProvider
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             // Header with back button
@@ -89,6 +98,19 @@ struct ProviderDetailView: View {
                         if !usage.breakdown.isEmpty {
                             ModelBreakdownView(breakdown: usage.breakdown)
                                 .padding(.horizontal, 16)
+                        }
+
+                        // Claude Code: Session list
+                        if isClaudeCode, let ccProvider = claudeProvider {
+                            Divider()
+                                .padding(.horizontal)
+
+                            SessionListView(
+                                sessions: ccProvider.recentSessions,
+                                accountInfo: ccProvider.accountInfo,
+                                subscriptionType: ccProvider.subscriptionType
+                            )
+                            .padding(.horizontal, 16)
                         }
                     }
                     .padding(.vertical, 12)

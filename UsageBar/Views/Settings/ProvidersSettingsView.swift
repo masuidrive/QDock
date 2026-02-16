@@ -31,6 +31,10 @@ struct ProviderSettingCard: View {
         case failure(String)
     }
 
+    private var isLocalProvider: Bool {
+        provider.id == "claude-code-local"
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             // Provider header
@@ -43,6 +47,16 @@ struct ProviderSettingCard: View {
                     .font(.callout)
                     .fontWeight(.medium)
 
+                if isLocalProvider {
+                    Text("AUTO")
+                        .font(.system(size: 8, weight: .bold))
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(.green.opacity(0.15))
+                        .foregroundStyle(.green)
+                        .clipShape(Capsule())
+                }
+
                 Spacer()
 
                 Toggle("", isOn: Binding(
@@ -53,73 +67,18 @@ struct ProviderSettingCard: View {
                 .controlSize(.small)
             }
 
-            // API key description
+            // Description
             Text(provider.apiKeyDescription)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            // API key input
-            HStack(spacing: 8) {
-                Group {
-                    if isShowingKey {
-                        TextField(provider.apiKeyPlaceholder, text: $apiKeyInput)
-                    } else {
-                        SecureField(provider.apiKeyPlaceholder, text: $apiKeyInput)
-                    }
-                }
-                .textFieldStyle(.roundedBorder)
-                .font(.system(.caption, design: .monospaced))
-
-                Button {
-                    isShowingKey.toggle()
-                } label: {
-                    Image(systemName: isShowingKey ? "eye.slash" : "eye")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-                .help(isShowingKey ? "Hide API key" : "Show API key")
-            }
-
-            // Action buttons
-            HStack {
-                Button("Save") {
-                    appState.providerManager.setAPIKey(apiKeyInput, for: provider.id)
-                    validationResult = nil
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
-                .disabled(apiKeyInput.isEmpty)
-
-                Button("Test") {
-                    Task { await validateKey() }
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(apiKeyInput.isEmpty || isValidating)
-
-                if isValidating {
-                    ProgressView()
-                        .controlSize(.mini)
-                }
-
-                Spacer()
-
-                // Validation result
-                if let result = validationResult {
-                    switch result {
-                    case .success:
-                        Label("Valid", systemImage: "checkmark.circle.fill")
-                            .font(.caption)
-                            .foregroundStyle(.green)
-                    case .failure(let message):
-                        Label(message, systemImage: "xmark.circle.fill")
-                            .font(.caption)
-                            .foregroundStyle(.red)
-                            .lineLimit(1)
-                    }
-                }
+            if isLocalProvider {
+                // Claude Code local — show status instead of API key input
+                claudeCodeStatusView
+            } else {
+                // API-based providers — show key input
+                apiKeyInputView
             }
         }
         .padding(12)
@@ -136,11 +95,135 @@ struct ProviderSettingCard: View {
         }
     }
 
+    // MARK: - Claude Code Status View
+
+    @ViewBuilder
+    private var claudeCodeStatusView: some View {
+        let ccProvider = provider as? ClaudeCodeProvider
+
+        VStack(alignment: .leading, spacing: 6) {
+            // Login status
+            HStack(spacing: 6) {
+                Image(systemName: ccProvider?.isLoggedIn == true ? "checkmark.circle.fill" : "xmark.circle")
+                    .foregroundStyle(ccProvider?.isLoggedIn == true ? .green : .orange)
+                    .font(.caption)
+                Text(ccProvider?.isLoggedIn == true ? "Logged in via OAuth" : "Not logged in")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            // Account info
+            if let account = ccProvider?.accountInfo {
+                HStack(spacing: 6) {
+                    Image(systemName: "person.circle")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if let email = account.emailAddress {
+                        Text(email)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    if let org = account.organizationName {
+                        Text("(\(org))")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+            }
+
+            // Subscription
+            if let sub = ccProvider?.subscriptionType {
+                HStack(spacing: 6) {
+                    Image(systemName: "star.circle")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text("\(sub.capitalized) plan")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            // Data path
+            HStack(spacing: 6) {
+                Image(systemName: "folder")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text("~/.claude/projects/")
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+            }
+        }
+    }
+
+    // MARK: - API Key Input View
+
+    @ViewBuilder
+    private var apiKeyInputView: some View {
+        HStack(spacing: 8) {
+            Group {
+                if isShowingKey {
+                    TextField(provider.apiKeyPlaceholder, text: $apiKeyInput)
+                } else {
+                    SecureField(provider.apiKeyPlaceholder, text: $apiKeyInput)
+                }
+            }
+            .textFieldStyle(.roundedBorder)
+            .font(.system(.caption, design: .monospaced))
+
+            Button {
+                isShowingKey.toggle()
+            } label: {
+                Image(systemName: isShowingKey ? "eye.slash" : "eye")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help(isShowingKey ? "Hide API key" : "Show API key")
+        }
+
+        HStack {
+            Button("Save") {
+                appState.providerManager.setAPIKey(apiKeyInput, for: provider.id)
+                validationResult = nil
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            .disabled(apiKeyInput.isEmpty)
+
+            Button("Test") {
+                Task { await validateKey() }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .disabled(apiKeyInput.isEmpty || isValidating)
+
+            if isValidating {
+                ProgressView()
+                    .controlSize(.mini)
+            }
+
+            Spacer()
+
+            if let result = validationResult {
+                switch result {
+                case .success:
+                    Label("Valid", systemImage: "checkmark.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.green)
+                case .failure(let message):
+                    Label(message, systemImage: "xmark.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .lineLimit(1)
+                }
+            }
+        }
+    }
+
     private func validateKey() async {
         isValidating = true
         validationResult = nil
 
-        // Temporarily save the key for validation
         appState.providerManager.setAPIKey(apiKeyInput, for: provider.id)
 
         do {

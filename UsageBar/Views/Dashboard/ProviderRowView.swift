@@ -19,10 +19,22 @@ struct ProviderRowView: View {
 
                 // Provider info
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(provider.name)
-                        .font(.callout)
-                        .fontWeight(.medium)
-                        .foregroundStyle(.primary)
+                    HStack(spacing: 6) {
+                        Text(provider.name)
+                            .font(.callout)
+                            .fontWeight(.medium)
+                            .foregroundStyle(.primary)
+
+                        if provider.id == "claude-code-local" {
+                            Text("LOCAL")
+                                .font(.system(size: 8, weight: .bold))
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 1)
+                                .background(.green.opacity(0.15))
+                                .foregroundStyle(.green)
+                                .clipShape(Capsule())
+                        }
+                    }
 
                     if isLoading {
                         ProgressView()

@@ -29,12 +29,27 @@ final class ProviderManager: ObservableObject {
         setupDefaultProviders()
     }
 
+    /// The Claude Code local provider (always first if detected)
+    var claudeCodeProvider: ClaudeCodeProvider? {
+        providers.first { $0.id == "claude-code-local" } as? ClaudeCodeProvider
+    }
+
     private func setupDefaultProviders() {
-        providers = [
-            AnthropicProvider(),
-            OpenAIProvider(),
-            OpenRouterProvider(),
-        ]
+        var result: [any UsageProvider] = []
+
+        // Auto-detect Claude Code installation — no API key needed
+        let claudeCode = ClaudeCodeProvider()
+        if claudeCode.isConfigured {
+            claudeCode.isEnabled = true
+            result.append(claudeCode)
+        }
+
+        // API-based providers (require manual key setup)
+        result.append(AnthropicProvider())
+        result.append(OpenAIProvider())
+        result.append(OpenRouterProvider())
+
+        providers = result
     }
 
     /// Fetch usage from all active providers
