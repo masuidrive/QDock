@@ -2,6 +2,8 @@
 
 A native macOS menu bar app that shows AI coding quota usage in real time (currently Claude Code and Codex CLI).
 
+![QDock demo](docs/media/qdock-demo.gif)
+
 ![Platform](https://img.shields.io/badge/platform-macOS%2014%2B-black)
 ![Swift](https://img.shields.io/badge/swift-5.10-orange)
 ![Status](https://img.shields.io/badge/status-active-success)
