@@ -68,8 +68,8 @@ struct DashboardView: View {
                             .buttonStyle(.plain)
                             .padding(.top, activeProviders.count > 1 ? 4 : 16)
 
-                            // Window cards
-                            ForEach(quota.windows) { window in
+                            // Window cards (exclude session if hero already shows it)
+                            ForEach(quota.windowsExcludingSessionWhenAvailable) { window in
                                 UsageCardView(window: window)
                             }
 
@@ -199,22 +199,23 @@ struct DashboardView: View {
     // MARK: - Hero Section
 
     private func heroSection(quota: QuotaData) -> some View {
-        let maxPercent = quota.maxUsagePercent
-        let isCritical = maxPercent >= 90
+        let heroWindow = quota.sessionWindow ?? quota.primaryWindow
+        let heroPercent = heroWindow?.usagePercent ?? 0
+        let isCritical = heroPercent >= 90
 
         return VStack(spacing: 8) {
             ZStack {
                 ProgressRingView(
-                    progress: maxPercent,
+                    progress: heroPercent,
                     size: 100,
                     lineWidth: 12
                 )
                 .if(isCritical) { view in
-                    view.glowEffect(color: ColorTheme.colorForUsage(maxPercent))
+                    view.glowEffect(color: ColorTheme.colorForUsage(heroPercent))
                 }
 
                 VStack(spacing: 2) {
-                    AnimatedPercentage(percent: maxPercent, fontSize: 28)
+                    AnimatedPercentage(percent: heroPercent, fontSize: 28)
 
                     if let plan = quota.planName {
                         Text(plan)
@@ -224,7 +225,7 @@ struct DashboardView: View {
                 }
             }
 
-            if let countdown = quota.primaryWindow?.resetCountdown {
+            if let countdown = heroWindow?.resetCountdown {
                 Text("Resets in \(countdown)")
                     .font(.caption)
                     .foregroundStyle(.secondary)

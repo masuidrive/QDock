@@ -99,6 +99,15 @@ struct QuotaData: Identifiable, Equatable {
         sessionWindow?.usagePercent ?? 0
     }
 
+    /// Window list excluding the session window when one exists.
+    ///
+    /// Used by expanded views to avoid rendering session twice
+    /// (hero ring + duplicated session card).
+    var windowsExcludingSessionWhenAvailable: [QuotaWindow] {
+        guard let session = sessionWindow else { return windows }
+        return windows.filter { $0 != session }
+    }
+
     /// The weekly window (7-day)
     var weeklyWindow: QuotaWindow? {
         windows.first { $0.id == "weekly" || $0.id == "seven_day" }
