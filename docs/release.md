@@ -26,10 +26,10 @@ git push origin v1.1.0
 - build universal app (`arm64` + `x86_64`)
 - generate `checksums.txt`
 - upload assets to GitHub Release
-- publish `@altansaid/qdock-installer` to npm
+- publish `@qdock/installer` to npm
 
 4. Validate on a clean macOS machine:
-- `npx @altansaid/qdock-installer`
+- `npx @qdock/installer`
 - manual DMG installation
 
 ## Important Notes (Current Setup)

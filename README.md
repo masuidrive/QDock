@@ -12,7 +12,7 @@ A native macOS menu bar app that shows AI coding quota usage in real time (curre
 ### 1) Command line (recommended)
 
 ```bash
-npx @altansaid/qdock-installer
+npx @qdock/installer
 ```
 
 Optional flags:

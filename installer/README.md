@@ -1,11 +1,11 @@
-# @altansaid/qdock-installer
+# @qdock/installer
 
 Official CLI installer for QDock on macOS.
 
 ## Usage
 
 ```bash
-npx @altansaid/qdock-installer
+npx @qdock/installer
 ```
 
 ### Options

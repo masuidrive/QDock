@@ -287,6 +287,53 @@ h1 {
   margin-top: 12px;
 }
 
+.first-launch-note {
+  margin-top: 18px;
+  padding: 18px;
+  border-radius: 16px;
+  border: 1px solid rgba(31, 42, 47, 0.18);
+  background:
+    radial-gradient(circle at 12% 0%, rgba(215, 127, 30, 0.16), transparent 36%),
+    linear-gradient(145deg, rgba(24, 26, 30, 0.94), rgba(12, 14, 17, 0.95));
+  box-shadow: 0 16px 30px rgba(10, 12, 16, 0.28);
+  color: #f5f7fa;
+}
+
+.first-launch-note h3 {
+  font-size: 1.2rem;
+}
+
+.first-launch-note p {
+  margin: 10px 0 0;
+  color: rgba(236, 240, 245, 0.8);
+}
+
+.first-launch-code {
+  margin-top: 12px;
+  border-color: rgba(129, 156, 185, 0.25);
+}
+
+.first-launch-code code {
+  background: rgba(5, 8, 12, 0.95);
+  color: #82b6ff;
+}
+
+.first-launch-code .copy-btn {
+  border-left-color: rgba(129, 156, 185, 0.25);
+  background: rgba(19, 23, 30, 0.92);
+  color: rgba(235, 242, 251, 0.9);
+}
+
+.first-launch-code .copy-btn:hover {
+  background: rgba(30, 36, 46, 0.95);
+}
+
+.first-launch-help code {
+  color: #9cc2ff;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.82rem;
+}
+
 .how {
   display: grid;
   grid-template-columns: 1.1fr 1fr;
@@ -337,6 +384,15 @@ h1 {
 .faq p {
   margin: 8px 0 0;
   color: var(--muted);
+}
+
+.faq code {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.82rem;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: rgba(31, 42, 47, 0.08);
+  color: #25333a;
 }
 
 .footer {

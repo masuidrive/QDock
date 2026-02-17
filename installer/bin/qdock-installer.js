@@ -74,7 +74,7 @@ function printHelp() {
 QDock Installer
 
 Usage:
-  npx @altansaid/qdock-installer [options]
+  npx @qdock/installer [options]
 
 Options:
   --channel stable|beta    Release channel (default: stable)

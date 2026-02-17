@@ -5,7 +5,7 @@ QDock supports macOS 14+.
 ## Option 1: Install with `npx` (Recommended)
 
 ```bash
-npx @altansaid/qdock-installer
+npx @qdock/installer
 ```
 
 Useful flags:

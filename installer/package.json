@@ -1,5 +1,5 @@
 {
-  "name": "@altansaid/qdock-installer",
+  "name": "@qdock/installer",
   "version": "0.1.0",
   "description": "CLI installer for QDock on macOS",
   "license": "MIT",
@@ -21,7 +21,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/altansaid/macOs-app.git",
+    "url": "git+https://github.com/altansaid/macOs-app.git",
     "directory": "installer"
   },
   "bugs": {
