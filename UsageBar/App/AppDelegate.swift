@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import SwiftUI
 
 /// AppDelegate managing the NSStatusItem and NSPopover for the menu bar app
@@ -7,11 +8,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var popover: NSPopover!
     private var appState: AppState!
     private var eventMonitor: Any?
-    private var menuBarImageCache: [String: NSImage] = [:]
+    private var screenParametersObserver: NSObjectProtocol?
+    private var activeSpaceObserver: NSObjectProtocol?
+    private var menuBarIconCache: [Int: NSImage] = [:]
+    private var singleInstanceLockFD: Int32 = -1
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Hide from Dock
         NSApp.setActivationPolicy(.accessory)
+
+        guard acquireSingleInstanceLock() else {
+            NSApp.terminate(nil)
+            return
+        }
 
         // Initialize state
         appState = AppState()
@@ -20,7 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: 18)
 
         if let button = statusItem.button {
-            button.imagePosition = .imageOnly
+            button.imagePosition = .imageLeading
             button.action = #selector(togglePopover)
             button.target = self
         }
@@ -54,6 +63,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             await appState.initialLoad()
         }
         applyMenuBarPresentation(appState.menuBarPresentation)
+        installMenuBarRefreshObservers()
+
+        // Re-apply once after the status item is fully attached to a screen.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.applyMenuBarPresentation(self.appState.menuBarPresentation)
+            self.closeUnexpectedSettingsWindowIfNeeded()
+        }
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        Task { @MainActor in
+            closeUnexpectedSettingsWindowIfNeeded()
+        }
     }
 
     @objc private func togglePopover() {
@@ -77,80 +100,102 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let button = statusItem.button else { return }
 
         let clampedPercent = max(0, min(100, presentation.roundedPercent))
+        button.image = cachedProgressIcon(percent: clampedPercent)
 
-        let cacheKey = "\(clampedPercent)_\(presentation.text ?? "")"
-        let image: NSImage
-        if let cached = menuBarImageCache[cacheKey] {
-            image = cached
+        if let text = presentation.text, !text.isEmpty {
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium),
+                .foregroundColor: ColorTheme.nsColorForUsage(presentation.percent),
+            ]
+            button.attributedTitle = NSAttributedString(string: " \(text)", attributes: attributes)
+
+            let textWidth = ceil((text as NSString).size(withAttributes: attributes).width)
+            // icon + gap + text + right breathing space
+            statusItem.length = ceil(18 + 3 + textWidth + 6)
         } else {
-            image = createMenuBarImage(
-                percent: Double(clampedPercent),
-                displayPercent: presentation.percent,
-                text: presentation.text
-            )
-            menuBarImageCache[cacheKey] = image
+            button.attributedTitle = NSAttributedString(string: "")
+            button.title = ""
+            statusItem.length = 18
         }
-        button.image = image
-        button.title = ""
-        statusItem.length = image.size.width
+        button.needsDisplay = true
     }
 
-    // MARK: - Composite Menu Bar Image
+    // MARK: - Menu Bar Refresh
 
-    private func createMenuBarImage(percent: Double, displayPercent: Double, text: String?) -> NSImage {
-        let iconSize: CGFloat = 18
+    private func installMenuBarRefreshObservers() {
+        screenParametersObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.refreshMenuBarForCurrentScreen()
+            }
+        }
+
+        activeSpaceObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.activeSpaceDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.refreshMenuBarForCurrentScreen()
+            }
+        }
+    }
+
+    private func acquireSingleInstanceLock() -> Bool {
+        let lockPath = "/tmp/com.qdock.instance.lock"
+        let fd = open(lockPath, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR)
+        guard fd >= 0 else { return true } // Fallback to not blocking launch if lock file cannot be created.
+
+        if flock(fd, LOCK_EX | LOCK_NB) != 0 {
+            close(fd)
+            return false
+        }
+
+        // Keep fd open for process lifetime.
+        singleInstanceLockFD = fd
+        return true
+    }
+
+    @MainActor
+    private func refreshMenuBarForCurrentScreen() {
+        menuBarIconCache.removeAll()
+        applyMenuBarPresentation(appState.menuBarPresentation)
+    }
+
+    @MainActor
+    private func closeUnexpectedSettingsWindowIfNeeded() {
+        for window in NSApp.windows where window.title == "QDock Settings" {
+            window.orderOut(nil)
+            window.close()
+        }
+    }
+
+    // MARK: - Progress Icon
+
+    private func cachedProgressIcon(percent: Int) -> NSImage {
+        if let cached = menuBarIconCache[percent] {
+            return cached
+        }
+        let image = createProgressIcon(percent: Double(percent))
+        menuBarIconCache[percent] = image
+        return image
+    }
+
+    private func createProgressIcon(percent: Double) -> NSImage {
+        let size: CGFloat = 18
         let lineWidth: CGFloat = 2.5
-        let font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
-        let gap: CGFloat = 3
-
-        var totalWidth = iconSize
-        var textAttrs: [NSAttributedString.Key: Any]?
-        var textSize: CGSize = .zero
-
-        if let text = text {
-            let color = ColorTheme.nsColorForUsage(displayPercent)
-            textAttrs = [
-                .font: font,
-                .foregroundColor: color,
-            ]
-            textSize = (text as NSString).size(withAttributes: textAttrs)
-            totalWidth += gap + ceil(textSize.width)
-        }
-
-        let width = ceil(totalWidth)
-        let height = iconSize
-        let scale: CGFloat = 2 // Always @2x for crisp rendering on all displays
-
-        // Create bitmap at fixed @2x resolution for consistent sizing across displays
-        guard let rep = NSBitmapImageRep(
-            bitmapDataPlanes: nil,
-            pixelsWide: Int(width * scale),
-            pixelsHigh: Int(height * scale),
-            bitsPerSample: 8,
-            samplesPerPixel: 4,
-            hasAlpha: true,
-            isPlanar: false,
-            colorSpaceName: .deviceRGB,
-            bytesPerRow: 0,
-            bitsPerPixel: 0
-        ) else {
-            return NSImage(size: NSSize(width: width, height: height))
-        }
-        rep.size = NSSize(width: width, height: height)
-
-        NSGraphicsContext.saveGraphicsState()
-        guard let ctx = NSGraphicsContext(bitmapImageRep: rep) else {
-            NSGraphicsContext.restoreGraphicsState()
-            return NSImage(size: NSSize(width: width, height: height))
-        }
-        NSGraphicsContext.current = ctx
-        ctx.cgContext.scaleBy(x: scale, y: scale)
+        let image = NSImage(size: NSSize(width: size, height: size))
 
         // Draw progress circle
+        image.lockFocus()
+
         let iconRect = NSRect(x: lineWidth / 2, y: lineWidth / 2,
-                              width: iconSize - lineWidth, height: iconSize - lineWidth)
-        let center = NSPoint(x: iconSize / 2, y: iconSize / 2)
-        let radius = (iconSize - lineWidth) / 2
+                              width: size - lineWidth, height: size - lineWidth)
+        let center = NSPoint(x: size / 2, y: size / 2)
+        let radius = (size - lineWidth) / 2
 
         let bgPath = NSBezierPath(ovalIn: iconRect)
         bgPath.lineWidth = lineWidth
@@ -175,16 +220,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             progressPath.stroke()
         }
 
-        // Draw text next to icon
-        if let text = text, let attrs = textAttrs {
-            let textY = (height - textSize.height) / 2
-            (text as NSString).draw(at: NSPoint(x: iconSize + gap, y: textY), withAttributes: attrs)
-        }
-
-        NSGraphicsContext.restoreGraphicsState()
-
-        let image = NSImage(size: NSSize(width: width, height: height))
-        image.addRepresentation(rep)
+        image.unlockFocus()
         image.isTemplate = false
         return image
     }
@@ -193,14 +229,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let monitor = eventMonitor {
             NSEvent.removeMonitor(monitor)
         }
+        if let observer = screenParametersObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        if let observer = activeSpaceObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(observer)
+        }
         appState.onMenuBarPresentationChanged = nil
         appState.providerManager.onStateChanged = nil
         appState.sessionWatcher.stopWatching()
         appState.refreshService.stopAutoRefresh()
+        if singleInstanceLockFD >= 0 {
+            close(singleInstanceLockFD)
+            singleInstanceLockFD = -1
+        }
     }
 }
 
 /// Root view inside the popover with animated transitions
+@MainActor
 struct PopoverContentView: View {
     let appState: AppState
 

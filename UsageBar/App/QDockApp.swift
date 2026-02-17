@@ -9,5 +9,9 @@ struct QDockApp: App {
         Settings {
             EmptyView()
         }
+        .commands {
+            // Settings are managed inside the popover UI.
+            CommandGroup(replacing: .appSettings) { }
+        }
     }
 }
