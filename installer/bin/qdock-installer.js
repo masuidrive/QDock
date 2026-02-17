@@ -208,10 +208,9 @@ async function sha256File(filePath) {
   });
 }
 
-async function verifyChecksumIfAvailable(artifactPath, checksumsAsset, opts) {
+async function verifyChecksum(artifactPath, checksumsAsset, opts) {
   if (!checksumsAsset) {
-    warn("checksums.txt asset not found, skipping checksum verification.");
-    return;
+    throw new Error("checksums.txt asset not found. Aborting for safety.");
   }
 
   const checksumsPath = `${artifactPath}.checksums.txt`;
@@ -226,8 +225,7 @@ async function verifyChecksumIfAvailable(artifactPath, checksumsAsset, opts) {
     .find((l) => l.endsWith(`  ${artifactName}`) || l.endsWith(` *${artifactName}`));
 
   if (!line) {
-    warn("No checksum entry for DMG in checksums.txt, skipping verification.");
-    return;
+    throw new Error("No checksum entry for DMG in checksums.txt. Aborting for safety.");
   }
 
   const expected = line.split(/\s+/)[0].toLowerCase();
@@ -365,7 +363,7 @@ async function main() {
 
     info(`Downloading ${dmg.name}...`);
     await downloadFile(dmg.browser_download_url, artifactPath, opts);
-    await verifyChecksumIfAvailable(artifactPath, checksums, opts);
+    await verifyChecksum(artifactPath, checksums, opts);
 
     const installedPath = await installFromDmg(artifactPath, opts.installDir, opts);
     info(`Installed to ${installedPath}`);

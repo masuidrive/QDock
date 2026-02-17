@@ -329,7 +329,7 @@ final class AppState {
         }
 
         do {
-            try await appUpdateService.installLatestReleaseWithNpx()
+            try await appUpdateService.installReleaseWithNpx(version: version)
             installedUpdateVersion = version
             availableUpdateVersion = nil
             availableUpdateURL = nil

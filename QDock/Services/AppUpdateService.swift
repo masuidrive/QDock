@@ -8,6 +8,7 @@ struct AppReleaseInfo {
 enum AppUpdateError: LocalizedError {
     case invalidEndpoint
     case invalidReleaseURL(String)
+    case invalidInstallerVersion(String)
     case npxNotFound
     case installerCommandFailed(status: Int32)
 
@@ -17,6 +18,8 @@ enum AppUpdateError: LocalizedError {
             return "Invalid release endpoint"
         case .invalidReleaseURL(let url):
             return "Invalid release URL: \(url)"
+        case .invalidInstallerVersion(let version):
+            return "Invalid installer version: \(version)"
         case .npxNotFound:
             return "npx not found. Install Node.js to enable one-click updates."
         case .installerCommandFailed(let status):
@@ -29,16 +32,16 @@ enum AppUpdateError: LocalizedError {
 final class AppUpdateService {
     private let networkClient: NetworkClient
     private let repository: String
-    private let installerPackage: String
+    private let installerPackageName: String
 
     init(
         networkClient: NetworkClient = .shared,
         repository: String = "altansaid/QDock",
-        installerPackage: String = "@qdock/installer@latest"
+        installerPackageName: String = "@qdock/installer"
     ) {
         self.networkClient = networkClient
         self.repository = repository
-        self.installerPackage = installerPackage
+        self.installerPackageName = installerPackageName
     }
 
     func fetchLatestStableRelease() async throws -> AppReleaseInfo {
@@ -73,14 +76,19 @@ final class AppUpdateService {
         return trimmed
     }
 
-    func installLatestReleaseWithNpx() async throws {
+    func installReleaseWithNpx(version: String) async throws {
+        guard let validatedVersion = Self.validateInstallerVersion(version) else {
+            throw AppUpdateError.invalidInstallerVersion(version)
+        }
+
         guard let npxPath = resolveExecutable(named: "npx") else {
             throw AppUpdateError.npxNotFound
         }
 
+        let pinnedInstallerPackage = "\(installerPackageName)@\(validatedVersion)"
         let process = Process()
         process.executableURL = URL(fileURLWithPath: npxPath)
-        process.arguments = ["--yes", installerPackage, "--no-launch"]
+        process.arguments = ["--yes", pinnedInstallerPackage, "--no-launch"]
         process.environment = processEnvironment(npxPath: npxPath)
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
@@ -100,6 +108,19 @@ final class AppUpdateService {
         guard status == 0 else {
             throw AppUpdateError.installerCommandFailed(status: status)
         }
+    }
+
+    private static func validateInstallerVersion(_ rawVersion: String) -> String? {
+        let normalized = normalizeVersion(rawVersion)
+        guard !normalized.isEmpty, normalized.count <= 64 else { return nil }
+        guard normalized.first?.isNumber == true else { return nil }
+
+        let allowedCharacters = CharacterSet(charactersIn: "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-")
+        guard normalized.rangeOfCharacter(from: allowedCharacters.inverted) == nil else {
+            return nil
+        }
+
+        return normalized
     }
 
     private func processEnvironment(npxPath: String) -> [String: String] {
