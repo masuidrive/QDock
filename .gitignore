@@ -36,3 +36,6 @@ dist/
 
 # Installer temp artifacts
 tmp/
+
+# Local media drafts
+promo-video/

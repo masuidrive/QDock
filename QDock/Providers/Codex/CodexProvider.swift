@@ -7,7 +7,7 @@ import Foundation
 /// Data: JSON-RPC via stdio to `codex app-server`
 final class CodexProvider: QuotaProvider {
     let id = "codex"
-    let name = "Codex CLI"
+    let name = "Codex"
     let iconName = "apple.terminal"
     let brandColorHex = "#10A37F"
     var isEnabled: Bool = false
@@ -36,7 +36,7 @@ final class CodexProvider: QuotaProvider {
     var authStatus: AuthStatus {
         refreshLocalStateSync()
         guard isInstalled else {
-            return .notInstalled(message: "Codex CLI not detected. Install via npm: npm i -g @openai/codex")
+            return .notInstalled(message: "Codex not detected. Install via npm: npm i -g @openai/codex")
         }
         // Codex uses its own auth — no extra setup needed
         return .authenticated(email: nil)

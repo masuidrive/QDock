@@ -12,7 +12,7 @@ import Foundation
 /// - Fallback: cached stale data on failure
 final class ClaudeCodeProvider: QuotaProvider {
     let id = "claude-code"
-    let name = "Claude Code"
+    let name = "Claude"
     let iconName = "terminal"
     let brandColorHex = "#D4A574"
     var isEnabled: Bool = false
@@ -49,7 +49,7 @@ final class ClaudeCodeProvider: QuotaProvider {
         let result = withState { localState.detectionResult }
 
         guard result.isDetected else {
-            return .notInstalled(message: "Claude Code not detected. Install it via npm or brew.")
+            return .notInstalled(message: "Claude not detected. Install it via npm or brew.")
         }
 
         let snapshot = withState { localState }

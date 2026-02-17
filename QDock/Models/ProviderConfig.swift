@@ -9,7 +9,7 @@ struct ProviderConfig: Codable, Identifiable, Equatable {
     static func claudeCode() -> ProviderConfig {
         ProviderConfig(
             id: "claude-code",
-            displayName: "Claude Code",
+            displayName: "Claude",
             isEnabled: true
         )
     }
@@ -17,7 +17,7 @@ struct ProviderConfig: Codable, Identifiable, Equatable {
     static func codex() -> ProviderConfig {
         ProviderConfig(
             id: "codex",
-            displayName: "Codex CLI",
+            displayName: "Codex",
             isEnabled: true
         )
     }

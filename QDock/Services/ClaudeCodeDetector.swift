@@ -29,7 +29,7 @@ final class ClaudeCodeDetector {
                 hasCredentialsFile: false,
                 hasSessions: false,
                 accountEmail: nil,
-                message: "Claude Code not detected"
+                message: "Claude not detected"
             )
         }
     }
@@ -210,7 +210,7 @@ final class ClaudeCodeDetector {
             hasCredentialsFile: false,
             hasSessions: false,
             accountEmail: nil,
-            message: "Claude Code CLI found at \(cliPath)"
+            message: "Claude CLI found at \(cliPath)"
         )
     }
 

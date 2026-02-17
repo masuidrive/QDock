@@ -54,7 +54,6 @@ swift run QDock
 ## Website
 
 Official website: [qdock.saidaltan.com](https://qdock.saidaltan.com/)
-Website source repository: `https://github.com/altansaid/qdocksite`
 
 ## Documentation
 

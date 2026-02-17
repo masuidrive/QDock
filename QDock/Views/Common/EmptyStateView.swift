@@ -16,7 +16,7 @@ struct EmptyStateView: View {
                 Text("No Providers Detected")
                     .font(.headline)
 
-                Text("Install Claude Code or Codex CLI to start tracking your usage quota.")
+                Text("Install Claude or Codex to start tracking your usage quota.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)

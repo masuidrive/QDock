@@ -122,14 +122,14 @@ struct ProviderSettingCard: View {
                     Image(systemName: result.isDetected ? "checkmark.circle.fill" : "exclamationmark.triangle")
                         .foregroundStyle(result.isDetected ? Color.usageGreen : Color.usageOrange)
                         .font(.caption)
-                    Text(result.isDetected ? "Claude Code detected" : "Claude Code not detected")
+                    Text(result.isDetected ? "Claude detected" : "Claude not detected")
                         .font(.caption)
                         .fontWeight(.medium)
                         .foregroundStyle(result.isDetected ? Color.usageGreen : Color.usageOrange)
                 }
 
                 if !result.isDetected {
-                    Text("Install Claude Code, then run `claude` in terminal.")
+                    Text("Install Claude, then run `claude` in terminal.")
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -245,7 +245,7 @@ struct ProviderSettingCard: View {
                 Image(systemName: isInstalled ? "checkmark.circle.fill" : "xmark.circle")
                     .foregroundStyle(isInstalled ? Color.usageGreen : Color.usageOrange)
                     .font(.caption)
-                Text(isInstalled ? "Codex CLI installed" : "Codex CLI not found")
+                Text(isInstalled ? "Codex installed" : "Codex not found")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -255,7 +255,7 @@ struct ProviderSettingCard: View {
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             } else {
-                Text("Install Codex CLI: npm i -g @openai/codex")
+                Text("Install Codex: npm i -g @openai/codex")
                     .font(.system(.caption, design: .monospaced))
                     .foregroundStyle(.tertiary)
             }
