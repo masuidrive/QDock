@@ -28,3 +28,11 @@ Package.resolved
 # Secrets
 *.env
 .env.*
+
+# Node / frontend
+node_modules/
+.vercel/
+dist/
+
+# Installer temp artifacts
+tmp/

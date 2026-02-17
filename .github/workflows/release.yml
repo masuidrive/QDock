@@ -1,0 +1,130 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Prepare metadata
+        id: meta
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          DMG_NAME="QDock-v${VERSION}-mac-universal.dmg"
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+            PRERELEASE="true"
+            NPM_TAG="next"
+          else
+            PRERELEASE="false"
+            NPM_TAG="latest"
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "dmg_name=$DMG_NAME" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
+          echo "npm_tag=$NPM_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Build universal app
+        run: ./scripts/build_universal_app.sh "${{ steps.meta.outputs.version }}"
+
+      - name: Import signing certificate
+        env:
+          APPLE_CERT_P12_BASE64: ${{ secrets.APPLE_CERT_P12_BASE64 }}
+          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+        run: |
+          CERT_PATH="$RUNNER_TEMP/qdock-cert.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/qdock-build.keychain-db"
+
+          if ! echo "$APPLE_CERT_P12_BASE64" | base64 --decode > "$CERT_PATH" 2>/dev/null; then
+            echo "$APPLE_CERT_P12_BASE64" | base64 -D > "$CERT_PATH"
+          fi
+
+          security create-keychain -p "$APPLE_CERT_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$APPLE_CERT_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -P "$APPLE_CERT_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+          security default-keychain -d user -s "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$APPLE_CERT_PASSWORD" "$KEYCHAIN_PATH"
+
+      - name: Sign app bundle
+        env:
+          APPLE_DEVELOPER_ID_APPLICATION: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION }}
+        run: |
+          codesign --force --deep --options runtime --timestamp \
+            --sign "$APPLE_DEVELOPER_ID_APPLICATION" \
+            dist/QDock.app
+          codesign --verify --deep --strict --verbose=2 dist/QDock.app
+          spctl --assess --type exec -vv dist/QDock.app
+
+      - name: Create DMG
+        run: ./scripts/create_dmg.sh "${{ steps.meta.outputs.version }}"
+
+      - name: Sign DMG
+        env:
+          APPLE_DEVELOPER_ID_APPLICATION: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION }}
+        run: |
+          codesign --force --timestamp \
+            --sign "$APPLE_DEVELOPER_ID_APPLICATION" \
+            "dist/${{ steps.meta.outputs.dmg_name }}"
+
+      - name: Notarize DMG
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: |
+          xcrun notarytool submit "dist/${{ steps.meta.outputs.dmg_name }}" \
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --wait
+
+      - name: Staple notarization tickets
+        run: |
+          xcrun stapler staple dist/QDock.app
+          xcrun stapler staple "dist/${{ steps.meta.outputs.dmg_name }}"
+          xcrun stapler validate dist/QDock.app
+          xcrun stapler validate "dist/${{ steps.meta.outputs.dmg_name }}"
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          shasum -a 256 "${{ steps.meta.outputs.dmg_name }}" > checksums.txt
+
+      - name: Publish installer to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          cd installer
+          npm version --no-git-tag-version "${{ steps.meta.outputs.version }}"
+          if [[ "${{ steps.meta.outputs.npm_tag }}" == "latest" ]]; then
+            npm publish --access public
+          else
+            npm publish --access public --tag "${{ steps.meta.outputs.npm_tag }}"
+          fi
+
+      - name: Upload GitHub release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: false
+          prerelease: ${{ steps.meta.outputs.prerelease == 'true' }}
+          files: |
+            dist/${{ steps.meta.outputs.dmg_name }}
+            dist/checksums.txt
