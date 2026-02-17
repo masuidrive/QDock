@@ -17,8 +17,7 @@ Useful flags:
 
 ## Option 2: Download DMG
 
-1. Open the latest release page:
-   `https://github.com/altansaid/macOs-app/releases/latest`
+1. Open [GitHub Releases](https://github.com/altansaid/QDock/releases/latest).
 2. Download `QDock-vX.Y.Z-mac-universal.dmg`.
 3. Drag `QDock.app` to `Applications`.
 4. Open QDock.

@@ -37,8 +37,8 @@ if [[ -d "$BUILD_OUTPUT_DIR/QDock_QDock.bundle" ]]; then
   cp -R "$BUILD_OUTPUT_DIR/QDock_QDock.bundle" "$RESOURCES_DIR/"
 fi
 
-cp "$ROOT_DIR/UsageBar/Resources/Info.plist" "$CONTENTS_DIR/Info.plist"
-cp "$ROOT_DIR/UsageBar/Resources/IconExports/QDock-Premium.icns" "$RESOURCES_DIR/QDock.icns"
+cp "$ROOT_DIR/QDock/Resources/Info.plist" "$CONTENTS_DIR/Info.plist"
+cp "$ROOT_DIR/QDock/Resources/IconExports/QDock-Premium.icns" "$RESOURCES_DIR/QDock.icns"
 
 BUILD_NUMBER="$(echo "$VERSION" | tr -cd '0-9.')"
 if [[ -z "$BUILD_NUMBER" ]]; then

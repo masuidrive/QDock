@@ -24,15 +24,15 @@ Optional flags:
 
 ### 2) Download DMG
 
-Download the latest notarized DMG from:
+Download the latest DMG from GitHub Releases:
 
-- `https://github.com/altansaid/macOs-app/releases/latest`
+- [Latest Release](https://github.com/altansaid/QDock/releases/latest)
 
 ### 3) Build from source
 
 ```bash
-git clone https://github.com/altansaid/macOs-app.git
-cd macOs-app
+git clone https://github.com/altansaid/QDock.git qdock
+cd qdock
 swift build
 swift run QDock
 ```

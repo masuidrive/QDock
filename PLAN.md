@@ -176,9 +176,9 @@ enum UsagePeriod: String, CaseIterable {
 ## File Structure
 
 ```
-UsageBar/
-├── UsageBar.xcodeproj
-├── UsageBar/
+QDock/
+├── Package.swift
+├── QDock/
 │   ├── App/
 │   │   ├── QDockApp.swift                 # @main, MenuBarExtra setup
 │   │   ├── AppDelegate.swift              # NSStatusItem + NSPopover

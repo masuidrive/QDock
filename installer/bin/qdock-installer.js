@@ -13,7 +13,7 @@ const { pipeline } = require("node:stream/promises");
 
 const execFileAsync = promisify(execFile);
 
-const REPO = process.env.QDOCK_REPO || "altansaid/macOs-app";
+const REPO = process.env.QDOCK_REPO || "altansaid/QDock";
 const GITHUB_API = `https://api.github.com/repos/${REPO}`;
 const GITHUB_WEB = `https://github.com/${REPO}`;
 

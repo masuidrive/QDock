@@ -10,7 +10,7 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "QDock",
-            path: "UsageBar",
+            path: "QDock",
             exclude: [
                 "Resources/Info.plist",
                 "Resources/IconExports"

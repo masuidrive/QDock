@@ -21,11 +21,11 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/altansaid/macOs-app.git",
+    "url": "git+https://github.com/altansaid/QDock.git",
     "directory": "installer"
   },
   "bugs": {
-    "url": "https://github.com/altansaid/macOs-app/issues"
+    "url": "https://github.com/altansaid/QDock/issues"
   },
-  "homepage": "https://github.com/altansaid/macOs-app#readme"
+  "homepage": "https://github.com/altansaid/QDock#readme"
 }

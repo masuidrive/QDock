@@ -33,7 +33,7 @@ final class AppUpdateService {
 
     init(
         networkClient: NetworkClient = .shared,
-        repository: String = "altansaid/macOs-app",
+        repository: String = "altansaid/QDock",
         installerPackage: String = "@qdock/installer@latest"
     ) {
         self.networkClient = networkClient
