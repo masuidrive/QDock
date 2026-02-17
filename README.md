@@ -47,7 +47,7 @@ swift run QDock
 
 ## Security and Trust
 
-- Release artifacts are intended to be signed and notarized via CI.
+- Release artifacts are built in CI and published with SHA-256 checksums.
 - Installer validates DMG checksum when `checksums.txt` is available in the release.
 - Manual tokens are stored in macOS Keychain.
 

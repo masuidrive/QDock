@@ -49,4 +49,4 @@ rm -rf ~/Applications/QDock.app
 
 - Installer reports `macOS only`: run on macOS 14+.
 - Installer cannot write `/Applications`: rerun with `--dir ~/Applications`.
-- Gatekeeper warning: make sure you downloaded from GitHub Releases and use the latest notarized build.
+- Gatekeeper warning: open QDock with Control-click -> `Open`, then allow it in `Privacy & Security`.
