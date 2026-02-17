@@ -188,17 +188,17 @@ final class AppState {
     var menuBarPercent: Double {
         switch menuBarUsageSource {
         case .highestUsage:
-            return providerManager.maxUsagePercent
+            return providerManager.maxSessionUsagePercent
         case .selectedProvider:
             guard let provider = selectedMenuBarProvider,
                   let quota = providerManager.quotaByProvider[provider.id] else {
                 return 0
             }
-            return quota.maxUsagePercent
+            return quota.sessionUsagePercent
         }
     }
 
-    /// Menu bar display text — shows highest usage percent
+    /// Menu bar display text — shows session usage percent
     var menuBarText: String? {
         guard showPercentInMenuBar else { return nil }
 
@@ -252,9 +252,9 @@ final class AppState {
 
     // MARK: - Dynamic Refresh
 
-    /// Update refresh interval based on usage level
+    /// Update refresh interval based on session usage level
     func updateDynamicRefreshInterval() {
-        let percent = providerManager.maxUsagePercent
+        let percent = providerManager.maxSessionUsagePercent
         let interval: TimeInterval
         if percent >= 75 {
             interval = 60   // High usage: every minute

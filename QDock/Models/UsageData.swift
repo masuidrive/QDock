@@ -67,6 +67,11 @@ struct QuotaData: Identifiable, Equatable {
         windows.first { $0.id == "session" || $0.id == "five_hour" }
     }
 
+    /// Session usage percent (menu bar source of truth)
+    var sessionUsagePercent: Double {
+        sessionWindow?.usagePercent ?? 0
+    }
+
     /// The weekly window (7-day)
     var weeklyWindow: QuotaWindow? {
         windows.first { $0.id == "weekly" || $0.id == "seven_day" }

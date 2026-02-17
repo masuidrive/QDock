@@ -19,7 +19,12 @@ final class ProviderManager {
         quotaByProvider.values.map(\.maxUsagePercent).max() ?? 0
     }
 
-    /// Overall usage level for menu bar coloring
+    /// Maximum session usage percent across all providers (for menu bar behavior)
+    var maxSessionUsagePercent: Double {
+        quotaByProvider.values.map(\.sessionUsagePercent).max() ?? 0
+    }
+
+    /// Overall usage level across all windows
     var overallLevel: UsageLevel {
         UsageLevel.from(percent: maxUsagePercent)
     }
