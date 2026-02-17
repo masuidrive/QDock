@@ -316,6 +316,12 @@ struct DashboardView: View {
                     .foregroundStyle(.tertiary)
                 }
 
+                if appState.availableUpdateVersion == nil {
+                    Text("Up to date")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+
                 Text("v\(appState.currentAppVersion)")
                     .font(.caption2)
                     .foregroundStyle(.quaternary)
