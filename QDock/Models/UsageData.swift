@@ -62,9 +62,36 @@ struct QuotaData: Identifiable, Equatable {
         windows.max(by: { $0.usagePercent < $1.usagePercent })
     }
 
-    /// The session window (5-hour)
+    /// The session window (5-hour-ish).
+    ///
+    /// Some providers may mislabel primary/secondary windows, so we prefer
+    /// a short-duration window (<= 12h) when available.
     var sessionWindow: QuotaWindow? {
-        windows.first { $0.id == "session" || $0.id == "five_hour" }
+        let sessionIds = Set(["session", "five_hour"])
+        let shortWindowUpperBoundMinutes = 12 * 60
+
+        if let explicitSession = windows.first(where: {
+            guard sessionIds.contains($0.id) else { return false }
+            if let duration = $0.windowDurationMinutes {
+                return duration > 0 && duration <= shortWindowUpperBoundMinutes
+            }
+            return true
+        }) {
+            return explicitSession
+        }
+
+        if let shortestShortWindow = windows
+            .filter({
+                guard let duration = $0.windowDurationMinutes else { return false }
+                return duration > 0 && duration <= shortWindowUpperBoundMinutes
+            })
+            .min(by: {
+                ($0.windowDurationMinutes ?? Int.max) < ($1.windowDurationMinutes ?? Int.max)
+            }) {
+            return shortestShortWindow
+        }
+
+        return windows.first { sessionIds.contains($0.id) }
     }
 
     /// Session usage percent (menu bar source of truth)

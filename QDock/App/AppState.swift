@@ -11,7 +11,7 @@ enum MenuBarUsageSource: String, CaseIterable, Identifiable {
     var displayName: String {
         switch self {
         case .highestUsage:
-            return "Highest Usage"
+            return "Highest Session Usage"
         case .selectedProvider:
             return "Specific Provider"
         }

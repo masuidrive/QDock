@@ -64,7 +64,7 @@ struct DisplaySettingsView: View {
                     }
                 }
 
-                Text("Menu bar percent and icon color are based on the source selected above.")
+                Text("Menu bar percent and icon color are based on session limits from the source selected above.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
