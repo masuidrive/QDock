@@ -1,34 +1,132 @@
 import Foundation
 
-// MARK: - Codex Local History
+// MARK: - Codex JSON-RPC Models
 
-/// A single entry from ~/.codex/history.jsonl
-struct CodexHistoryEntry: Decodable {
-    let sessionId: String?
-    let timestamp: String?
-    let model: String?
-    let provider: String?
-    let messages: [CodexMessage]?
-    let totalTokens: Int?
-    let promptTokens: Int?
-    let completionTokens: Int?
-    let cost: Double?
+/// JSON-RPC response envelope
+struct JsonRpcResponse: Decodable {
+    let jsonrpc: String?
+    let id: Int?
+    let result: JsonRpcResult?
+    let error: JsonRpcError?
+    let method: String?
+}
 
-    struct CodexMessage: Decodable {
-        let role: String?
-        let content: String?
-    }
+struct JsonRpcResult: Decodable {
+    let capabilities: ServerCapabilities?
+    let userAgent: String?
+    let rateLimits: RateLimitsResult?
+    let rateLimitsByLimitId: [String: RateLimitsResult]?
 
     enum CodingKeys: String, CodingKey {
-        case sessionId = "session_id"
-        case timestamp
-        case model
-        case provider
-        case messages
-        case totalTokens = "total_tokens"
-        case promptTokens = "prompt_tokens"
-        case completionTokens = "completion_tokens"
-        case cost
+        case capabilities
+        case userAgent
+        case rateLimits
+        case rateLimitsLegacy = "rate_limits"
+        case rateLimitsByLimitId
+        case rateLimitsByLimitIdLegacy = "rate_limits_by_limit_id"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        capabilities = try container.decodeIfPresent(ServerCapabilities.self, forKey: .capabilities)
+        userAgent = try container.decodeIfPresent(String.self, forKey: .userAgent)
+
+        rateLimits = try container.decodeIfPresent(RateLimitsResult.self, forKey: .rateLimits)
+            ?? container.decodeIfPresent(RateLimitsResult.self, forKey: .rateLimitsLegacy)
+
+        rateLimitsByLimitId = try container.decodeIfPresent([String: RateLimitsResult].self, forKey: .rateLimitsByLimitId)
+            ?? container.decodeIfPresent([String: RateLimitsResult].self, forKey: .rateLimitsByLimitIdLegacy)
+    }
+
+    /// Prefer the metered Codex bucket when available.
+    var resolvedRateLimits: RateLimitsResult? {
+        if let buckets = rateLimitsByLimitId {
+            if let codexBucket = buckets["codex"] {
+                return codexBucket
+            }
+            if let firstBucket = buckets.values.first {
+                return firstBucket
+            }
+        }
+        return rateLimits
+    }
+}
+
+struct ServerCapabilities: Decodable {
+    let name: String?
+    let version: String?
+}
+
+struct JsonRpcError: Decodable {
+    let code: Int?
+    let message: String?
+}
+
+// MARK: - Rate Limits
+
+struct RateLimitsResult: Decodable {
+    let primary: RateLimitWindow?
+    let secondary: RateLimitWindow?
+    let planType: String?
+
+    enum CodingKeys: String, CodingKey {
+        case primary
+        case secondary
+        case planType
+        case planTypeLegacy = "plan_type"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        primary = try container.decodeIfPresent(RateLimitWindow.self, forKey: .primary)
+        secondary = try container.decodeIfPresent(RateLimitWindow.self, forKey: .secondary)
+        planType = try container.decodeIfPresent(String.self, forKey: .planType)
+            ?? container.decodeIfPresent(String.self, forKey: .planTypeLegacy)
+    }
+}
+
+struct RateLimitWindow: Decodable {
+    let usedPercent: Double?
+    let resetsAt: Int?              // Unix timestamp
+    let windowDurationMins: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case usedPercent
+        case resetsAt
+        case windowDurationMins
+        case usedPercentLegacy = "used_percent"
+        case resetsAtLegacy = "resets_at"
+        case windowDurationMinsLegacy = "window_duration_mins"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+
+        usedPercent = Self.decodePercent(from: container, key: .usedPercent)
+            ?? Self.decodePercent(from: container, key: .usedPercentLegacy)
+
+        resetsAt = try container.decodeIfPresent(Int.self, forKey: .resetsAt)
+            ?? container.decodeIfPresent(Int.self, forKey: .resetsAtLegacy)
+
+        windowDurationMins = try container.decodeIfPresent(Int.self, forKey: .windowDurationMins)
+            ?? container.decodeIfPresent(Int.self, forKey: .windowDurationMinsLegacy)
+    }
+
+    private static func decodePercent(
+        from container: KeyedDecodingContainer<CodingKeys>,
+        key: CodingKeys
+    ) -> Double? {
+        if let value = try? container.decode(Double.self, forKey: key) {
+            return value
+        }
+        if let value = try? container.decode(Int.self, forKey: key) {
+            return Double(value)
+        }
+        if let value = try? container.decode(String.self, forKey: key),
+           let percent = Double(value) {
+            return percent
+        }
+        return nil
     }
 }
 
@@ -38,7 +136,6 @@ struct CodexHistoryEntry: Decodable {
 struct CodexConfig {
     let model: String?
     let provider: String?
-    let historyPersistence: String?  // "full", "none"
 
     static func read() -> CodexConfig? {
         let configPath = FileManager.default.homeDirectoryForCurrentUser
@@ -49,8 +146,7 @@ struct CodexConfig {
 
         return CodexConfig(
             model: extractTOMLValue(from: content, key: "model"),
-            provider: extractTOMLValue(from: content, key: "provider"),
-            historyPersistence: extractTOMLValue(from: content, section: "history", key: "persistence")
+            provider: extractTOMLValue(from: content, key: "provider")
         )
     }
 
@@ -61,7 +157,6 @@ struct CodexConfig {
         for line in lines {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
 
-            // Section header
             if trimmed.hasPrefix("[") {
                 let sectionName = trimmed
                     .trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
@@ -72,7 +167,6 @@ struct CodexConfig {
 
             guard inSection else { continue }
 
-            // Key = "value" or key = 'value'
             let parts = trimmed.split(separator: "=", maxSplits: 1)
             guard parts.count == 2 else { continue }
 

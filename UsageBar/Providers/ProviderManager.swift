@@ -1,146 +1,192 @@
 import Foundation
-import SwiftUI
+import Observation
 
-/// Manages all usage providers and orchestrates data fetching
+/// Manages all quota providers and orchestrates data fetching
+@Observable
 @MainActor
-final class ProviderManager: ObservableObject {
-    @Published var providers: [any UsageProvider] = []
-    @Published var usageByProvider: [String: UsageData] = [:]
-    @Published var errorsByProvider: [String: String] = [:]
-    @Published var loadingProviders: Set<String> = []
-    @Published var selectedPeriod: UsagePeriod = .today
+final class ProviderManager {
+    var providers: [any QuotaProvider] = []
+    var quotaByProvider: [String: QuotaData] = [:]
+    var errorsByProvider: [String: String] = [:]
+    var loadingProviders: Set<String> = []
+    @ObservationIgnored
+    var onStateChanged: (() -> Void)?
 
-    /// Total cost across all providers
-    var totalCost: Decimal {
-        usageByProvider.values.reduce(0) { $0 + $1.totalCostUSD }
+    private var providersRevision: UInt64 = 0
+
+    /// Maximum usage percent across all providers
+    var maxUsagePercent: Double {
+        quotaByProvider.values.map(\.maxUsagePercent).max() ?? 0
     }
 
-    /// Total tokens across all providers
-    var totalTokens: Int {
-        usageByProvider.values.reduce(0) { $0 + $1.totalTokens }
+    /// Overall usage level for menu bar coloring
+    var overallLevel: UsageLevel {
+        UsageLevel.from(percent: maxUsagePercent)
     }
 
     /// Active (enabled + configured) providers
-    var activeProviders: [any UsageProvider] {
-        providers.filter { $0.isEnabled && $0.isConfigured }
+    var activeProviders: [any QuotaProvider] {
+        _ = providersRevision
+        return providers.filter { $0.isEnabled && $0.isConfigured }
+    }
+
+    /// The Claude Code provider
+    var claudeCodeProvider: ClaudeCodeProvider? {
+        providers.first { $0.id == "claude-code" } as? ClaudeCodeProvider
+    }
+
+    /// The Codex provider
+    var codexProvider: CodexProvider? {
+        providers.first { $0.id == "codex" } as? CodexProvider
+    }
+
+    /// Earliest reset time across all providers
+    var earliestReset: Date? {
+        quotaByProvider.values.compactMap(\.earliestReset).min()
+    }
+
+    /// Formatted countdown for the earliest reset
+    var earliestResetCountdown: String? {
+        guard let resetDate = earliestReset else { return nil }
+        let remaining = resetDate.timeIntervalSinceNow
+        guard remaining > 0 else { return nil }
+
+        let totalMinutes = Int(remaining) / 60
+        let hours = totalMinutes / 60
+        let minutes = totalMinutes % 60
+
+        if hours > 0 {
+            return "Resets in \(hours)h \(minutes)m"
+        } else {
+            return "Resets in \(minutes)m"
+        }
     }
 
     init() {
-        setupDefaultProviders()
+        setupProviders()
     }
 
-    /// The Claude Code local provider (always first if detected)
-    var claudeCodeProvider: ClaudeCodeProvider? {
-        providers.first { $0.id == "claude-code-local" } as? ClaudeCodeProvider
-    }
+    private func setupProviders() {
+        var result: [any QuotaProvider] = []
 
-    private func setupDefaultProviders() {
-        var result: [any UsageProvider] = []
-
-        // === Auto-detected local providers (no API key needed) ===
-
-        // Claude Code — reads from ~/.claude/
+        // Claude Code — auto-detect
         let claudeCode = ClaudeCodeProvider()
         if claudeCode.isConfigured {
             claudeCode.isEnabled = true
-            result.append(claudeCode)
         }
+        result.append(claudeCode)
 
-        // Cursor — reads auth from local SQLite, fetches from cursor.com
-        let cursor = CursorProvider()
-        if cursor.isConfigured {
-            cursor.isEnabled = true
-            result.append(cursor)
-        }
-
-        // OpenAI Codex CLI — reads from ~/.codex/
+        // Codex CLI — auto-detect
         let codex = CodexProvider()
         if codex.isConfigured {
             codex.isEnabled = true
-            result.append(codex)
         }
-
-        // === API-based providers (require manual key setup) ===
-
-        result.append(AnthropicProvider())
-        result.append(OpenAIProvider())
-
-        // GitHub Copilot — requires PAT + org name
-        result.append(CopilotProvider())
-
-        // Windsurf — Enterprise API key or local detection
-        let windsurf = WindsurfProvider()
-        if windsurf.isInstalled {
-            windsurf.isEnabled = true
-        }
-        result.append(windsurf)
-
-        result.append(OpenRouterProvider())
+        result.append(codex)
 
         providers = result
     }
 
-    /// Fetch usage from all active providers
+    func refreshProviderLocalStates() async {
+        for provider in providers {
+            await provider.refreshLocalState()
+        }
+        providersRevision &+= 1
+        notifyStateChanged()
+    }
+
+    func refreshProviderLocalState(for providerId: String) async {
+        guard let provider = providers.first(where: { $0.id == providerId }) else { return }
+        await provider.refreshLocalState()
+        providersRevision &+= 1
+        notifyStateChanged()
+    }
+
+    /// Fetch quota from all active providers
     func fetchAll() async {
+        await refreshProviderLocalStates()
+        let providersToFetch = activeProviders
+
         await withTaskGroup(of: Void.self) { group in
-            for provider in activeProviders {
+            for provider in providersToFetch {
                 group.addTask { [weak self] in
-                    await self?.fetchUsage(for: provider)
+                    await self?.fetchQuota(for: provider)
                 }
             }
         }
     }
 
-    /// Fetch usage for a single provider
-    func fetchUsage(for provider: any UsageProvider) async {
+    /// Fetch quota for a single provider with timeout
+    func fetchQuota(for provider: any QuotaProvider) async {
         let id = provider.id
-        loadingProviders.insert(id)
-        errorsByProvider.removeValue(forKey: id)
+        await provider.refreshLocalState()
+
+        if !loadingProviders.contains(id) {
+            loadingProviders.insert(id)
+        }
+        if errorsByProvider[id] != nil {
+            errorsByProvider.removeValue(forKey: id)
+        }
 
         do {
-            let usage = try await provider.fetchUsage(for: selectedPeriod)
-            usageByProvider[id] = usage
+            let quota = try await withThrowingTaskGroup(of: QuotaData.self) { group in
+                group.addTask {
+                    try await provider.fetchQuota()
+                }
+                group.addTask {
+                    try await Task.sleep(for: .seconds(15))
+                    throw ProviderError.apiError("Request timed out after 15s")
+                }
+                let result = try await group.next()!
+                group.cancelAll()
+                return result
+            }
+            if shouldStoreQuota(quota, for: id) {
+                quotaByProvider[id] = quota
+            }
+        } catch is CancellationError {
+            setErrorIfNeeded("Request cancelled", for: id)
         } catch {
-            errorsByProvider[id] = error.localizedDescription
+            setErrorIfNeeded(error.localizedDescription, for: id)
         }
 
         loadingProviders.remove(id)
-    }
-
-    /// Save API key for a provider
-    func setAPIKey(_ key: String, for providerId: String) {
-        guard let provider = providers.first(where: { $0.id == providerId }) else { return }
-
-        let keychainKey = "\(providerId)-api-key"
-        if key.isEmpty {
-            KeychainService.shared.delete(key: keychainKey)
-        } else {
-            try? KeychainService.shared.save(key: keychainKey, value: key)
-        }
-
-        // Trigger UI update
-        objectWillChange.send()
-
-        // Auto-enable if key is set
-        if !key.isEmpty {
-            provider.isEnabled = true
-        }
-    }
-
-    /// Get API key for a provider
-    func getAPIKey(for providerId: String) -> String {
-        KeychainService.shared.get(key: "\(providerId)-api-key") ?? ""
+        notifyStateChanged()
     }
 
     /// Toggle provider enabled state
     func toggleProvider(_ providerId: String) {
-        guard let provider = providers.first(where: { $0.id == providerId }) else { return }
-        provider.isEnabled.toggle()
-        objectWillChange.send()
+        guard let index = providers.firstIndex(where: { $0.id == providerId }) else { return }
+        providers[index].isEnabled.toggle()
+        providersRevision &+= 1
 
-        if !provider.isEnabled {
-            usageByProvider.removeValue(forKey: providerId)
+        let provider = providers[index]
+
+        if provider.isEnabled {
+            // Fetch data immediately when enabled
+            Task { [weak self] in
+                await self?.fetchQuota(for: provider)
+            }
+        } else {
+            quotaByProvider.removeValue(forKey: providerId)
             errorsByProvider.removeValue(forKey: providerId)
         }
+        notifyStateChanged()
+    }
+
+    private func setErrorIfNeeded(_ message: String, for providerId: String) {
+        guard errorsByProvider[providerId] != message else { return }
+        errorsByProvider[providerId] = message
+    }
+
+    private func shouldStoreQuota(_ newQuota: QuotaData, for providerId: String) -> Bool {
+        guard let existing = quotaByProvider[providerId] else { return true }
+        return existing.windows != newQuota.windows
+            || existing.planName != newQuota.planName
+            || existing.accountEmail != newQuota.accountEmail
+            || existing.isStale != newQuota.isStale
+    }
+
+    private func notifyStateChanged() {
+        onStateChanged?()
     }
 }

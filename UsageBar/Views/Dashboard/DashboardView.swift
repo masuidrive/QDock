@@ -2,7 +2,41 @@ import SwiftUI
 
 /// Main dashboard view shown in the popover
 struct DashboardView: View {
-    @ObservedObject var appState: AppState
+    let appState: AppState
+    @State private var selectedProviderIndex: Int = 0
+
+    private struct ProviderTab: Identifiable {
+        let id: String
+        let index: Int
+        let name: String
+        let iconName: String
+    }
+
+    private var activeProviders: [any QuotaProvider] {
+        appState.providerManager.activeProviders
+    }
+
+    private var selectedProvider: (any QuotaProvider)? {
+        guard !activeProviders.isEmpty else { return nil }
+        let index = min(selectedProviderIndex, activeProviders.count - 1)
+        return activeProviders[index]
+    }
+
+    private var selectedQuota: QuotaData? {
+        guard let provider = selectedProvider else { return nil }
+        return appState.providerManager.quotaByProvider[provider.id]
+    }
+
+    private var providerTabs: [ProviderTab] {
+        activeProviders.enumerated().map { index, provider in
+            ProviderTab(
+                id: provider.id,
+                index: index,
+                name: provider.name,
+                iconName: provider.iconName
+            )
+        }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -11,40 +45,71 @@ struct DashboardView: View {
 
             Divider()
 
-            if appState.providerManager.activeProviders.isEmpty {
+            if activeProviders.isEmpty {
                 EmptyStateView {
                     appState.showingSettings = true
                 }
             } else {
                 ScrollView {
-                    VStack(spacing: 12) {
-                        // Total summary
-                        UsageSummaryView(appState: appState)
+                    VStack(spacing: 16) {
+                        // Provider switcher (only when multiple providers)
+                        if activeProviders.count > 1 {
+                            providerSwitcher
+                        }
 
-                        Divider()
-                            .padding(.horizontal)
+                        if let quota = selectedQuota {
+                            // Hero section — tappable to go to detail
+                            Button {
+                                appState.selectedProvider = selectedProvider
+                            } label: {
+                                heroSection(quota: quota)
+                            }
+                            .buttonStyle(.plain)
+                            .padding(.top, activeProviders.count > 1 ? 4 : 16)
 
-                        // Provider rows
-                        ForEach(appState.providerManager.activeProviders, id: \.id) { provider in
-                            ProviderRowView(
-                                provider: provider,
-                                usage: appState.providerManager.usageByProvider[provider.id],
-                                error: appState.providerManager.errorsByProvider[provider.id],
-                                isLoading: appState.providerManager.loadingProviders.contains(provider.id)
-                            ) {
-                                appState.selectedProvider = provider
+                            // Window cards
+                            ForEach(quota.windows) { window in
+                                UsageCardView(window: window)
+                            }
+
+                            // Account info footer
+                            accountFooter(quota: quota)
+                        } else if let provider = selectedProvider,
+                                  let error = appState.providerManager.errorsByProvider[provider.id] {
+                            // Error state
+                            VStack(spacing: 8) {
+                                Spacer().frame(height: 40)
+                                Image(systemName: "exclamationmark.triangle")
+                                    .font(.system(size: 24))
+                                    .foregroundStyle(.orange)
+                                Text(error)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .multilineTextAlignment(.center)
+                                Spacer().frame(height: 40)
+                            }
+                            .padding(.horizontal, 8)
+                        } else if let provider = selectedProvider,
+                                  appState.providerManager.loadingProviders.contains(provider.id) {
+                            // Loading
+                            VStack {
+                                Spacer().frame(height: 60)
+                                ProgressView("Loading...")
+                                Spacer().frame(height: 60)
+                            }
+                        } else {
+                            // No data yet
+                            VStack {
+                                Spacer().frame(height: 60)
+                                Text("No data available")
+                                    .font(.caption)
+                                    .foregroundStyle(.tertiary)
+                                Spacer().frame(height: 60)
                             }
                         }
-
-                        // Trend chart (if data available)
-                        if !allDailyTrends.isEmpty {
-                            Divider()
-                                .padding(.horizontal)
-                            TrendChartView(dailyData: allDailyTrends)
-                                .padding(.horizontal)
-                        }
                     }
-                    .padding(.vertical, 12)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 12)
                 }
             }
 
@@ -60,8 +125,14 @@ struct DashboardView: View {
 
     private var headerView: some View {
         HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("UsageBar")
+            RefreshButton(isRefreshing: appState.refreshService.isRefreshing) {
+                Task { await appState.manualRefresh() }
+            }
+
+            Spacer()
+
+            VStack(spacing: 1) {
+                Text("QDock")
                     .font(.headline)
 
                 if let lastRefresh = appState.refreshService.timeSinceLastRefresh {
@@ -72,22 +143,6 @@ struct DashboardView: View {
             }
 
             Spacer()
-
-            // Period picker
-            Picker("", selection: $appState.providerManager.selectedPeriod) {
-                ForEach(UsagePeriod.allCases) { period in
-                    Text(period.rawValue).tag(period)
-                }
-            }
-            .pickerStyle(.menu)
-            .frame(width: 120)
-            .onChange(of: appState.providerManager.selectedPeriod) { _, _ in
-                Task { await appState.manualRefresh() }
-            }
-
-            RefreshButton(isRefreshing: appState.refreshService.isRefreshing) {
-                Task { await appState.manualRefresh() }
-            }
 
             Button {
                 appState.showingSettings = true
@@ -103,11 +158,121 @@ struct DashboardView: View {
         .padding(.vertical, 12)
     }
 
+    // MARK: - Provider Switcher
+
+    private var providerSwitcher: some View {
+        HStack(spacing: 0) {
+            ForEach(providerTabs) { tab in
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        selectedProviderIndex = tab.index
+                    }
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: tab.iconName)
+                            .font(.system(size: 10))
+                        Text(tab.name)
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(selectedProviderIndex == tab.index
+                                  ? Color.primary.opacity(0.1)
+                                  : Color.clear)
+                    )
+                    .foregroundStyle(selectedProviderIndex == tab.index ? .primary : .secondary)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(3)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color.primary.opacity(0.04))
+        )
+        .padding(.top, 8)
+    }
+
+    // MARK: - Hero Section
+
+    private func heroSection(quota: QuotaData) -> some View {
+        let maxPercent = quota.maxUsagePercent
+        let isCritical = maxPercent >= 90
+
+        return VStack(spacing: 8) {
+            ZStack {
+                ProgressRingView(
+                    progress: maxPercent,
+                    size: 100,
+                    lineWidth: 12
+                )
+                .if(isCritical) { view in
+                    view.glowEffect(color: ColorTheme.colorForUsage(maxPercent))
+                }
+
+                VStack(spacing: 2) {
+                    AnimatedPercentage(percent: maxPercent, fontSize: 28)
+
+                    if let plan = quota.planName {
+                        Text(plan)
+                            .font(.system(size: 10, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+
+            if let countdown = quota.primaryWindow?.resetCountdown {
+                Text("Resets in \(countdown)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            // Subtle tap hint
+            Text("Tap for details")
+                .font(.system(size: 9))
+                .foregroundStyle(.quaternary)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    // MARK: - Account Footer
+
+    private func accountFooter(quota: QuotaData) -> some View {
+        HStack(spacing: 6) {
+            if let email = quota.accountEmail ?? (selectedProvider as? ClaudeCodeProvider)?.accountEmail {
+                Image(systemName: "person.circle")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                Text(email)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            if let plan = quota.planName {
+                Text(plan)
+                    .font(.system(size: 9, weight: .bold, design: .rounded))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(
+                        Capsule()
+                            .fill(Color.claudeAccent.opacity(0.15))
+                    )
+                    .foregroundStyle(Color.claudeAccent)
+            }
+        }
+        .padding(.top, 4)
+    }
+
     // MARK: - Footer
 
     private var footerView: some View {
         HStack {
-            Button("Quit UsageBar") {
+            Button("Quit QDock") {
                 NSApplication.shared.terminate(nil)
             }
             .buttonStyle(.plain)
@@ -123,12 +288,17 @@ struct DashboardView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
     }
+}
 
-    // MARK: - Helpers
+// MARK: - Conditional Modifier
 
-    private var allDailyTrends: [DailyUsage] {
-        appState.providerManager.usageByProvider.values
-            .flatMap { $0.dailyTrend }
-            .sorted { $0.date < $1.date }
+extension View {
+    @ViewBuilder
+    func `if`<Transform: View>(_ condition: Bool, transform: (Self) -> Transform) -> some View {
+        if condition {
+            transform(self)
+        } else {
+            self
+        }
     }
 }

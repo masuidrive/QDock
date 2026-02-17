@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Empty state shown when no providers are configured
+/// Empty state shown when no providers are configured or detected
 struct EmptyStateView: View {
     let onOpenSettings: () -> Void
 
@@ -8,15 +8,15 @@ struct EmptyStateView: View {
         VStack(spacing: 16) {
             Spacer()
 
-            Image(systemName: "chart.bar.doc.horizontal")
+            Image(systemName: "gauge.medium")
                 .font(.system(size: 48))
                 .foregroundStyle(.tertiary)
 
             VStack(spacing: 8) {
-                Text("No Providers Configured")
+                Text("No Providers Detected")
                     .font(.headline)
 
-                Text("Add an API key to start tracking your AI usage across providers.")
+                Text("Install Claude Code or Codex CLI to start tracking your usage quota.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)

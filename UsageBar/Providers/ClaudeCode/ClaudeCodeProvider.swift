@@ -1,286 +1,304 @@
 import Foundation
 
-/// Claude Code local provider — reads usage directly from local files
-/// No API key needed! Automatically detects Claude Code installation and
-/// reads session data from ~/.claude/projects/ and stats from stats-cache.json
+/// Claude Code quota provider — fetches usage limits from Claude API
 ///
-/// Fallback chain:
-/// 1. Local JSONL session files (best — full per-session detail)
-/// 2. stats-cache.json (good — aggregated model usage with cost)
-/// 3. OAuth token → Anthropic API (fallback — org-level usage when no local files)
-/// 4. Pricing-based estimation (last resort — calculate cost from token counts)
-final class ClaudeCodeProvider: UsageProvider {
-    let id = "claude-code-local"
+/// Auth chain (avoids Keychain prompts):
+/// 1. ~/.claude/.credentials.json file
+/// 2. Keychain (silent read — no prompt if accessible)
+/// 3. In-app onboarding fallback
+///
+/// Data source:
+/// - Primary: GET https://api.claude.ai/api/auth/usage
+/// - Fallback: cached stale data on failure
+final class ClaudeCodeProvider: QuotaProvider {
+    let id = "claude-code"
     let name = "Claude Code"
     let iconName = "terminal"
     let brandColorHex = "#D4A574"
-    var isEnabled: Bool = true
-
-    let apiKeyDescription = "No API key needed! Reads directly from your local Claude Code data."
-    let apiKeyPlaceholder = ""
+    var isEnabled: Bool = false
 
     private(set) var detector = ClaudeCodeDetector()
-    private(set) var detectionResult: ClaudeCodeDetector.DetectionResult?
-    private var sessionParser: SessionParser?
-    private var cachedSessions: [ClaudeCodeSession] = []
+    var detectionResult: ClaudeCodeDetector.DetectionResult? {
+        withState { localState.detectionResult }
+    }
+    private var cachedQuota: QuotaData?
+    private var manualToken: String?
+    private var localState = ClaudeProviderLocalState.empty
+    private let localStateTTL: TimeInterval = 30
+    private let stateLock = NSLock()
+    private let refreshLock = NSLock()
 
-    /// Claude Code is configured if any detection strategy succeeds
+    init() {
+        if let saved = KeychainService.shared.get(key: "claude-token"), !saved.isEmpty {
+            withState {
+                manualToken = saved
+            }
+        }
+        refreshLocalStateSync(force: true)
+    }
+
+    // MARK: - QuotaProvider
+
     var isConfigured: Bool {
-        let result = detector.detect()
-        detectionResult = result
-        return result.isDetected
+        refreshLocalStateSync()
+        return withState { localState.detectionResult.isDetected }
     }
 
-    /// Check if Claude Code is installed (static convenience)
-    static var isInstalled: Bool {
-        ClaudeCodeDetector().detect().isDetected
+    var authStatus: AuthStatus {
+        refreshLocalStateSync()
+        let result = withState { localState.detectionResult }
+
+        guard result.isDetected else {
+            return .notInstalled(message: "Claude Code not detected. Install it via npm or brew.")
+        }
+
+        let snapshot = withState { localState }
+        if let token = snapshot.accessToken, !token.isEmpty {
+            return .authenticated(email: snapshot.accountEmail)
+        }
+
+        return .needsAuth(message: "Run `claude` in your terminal to authenticate, or paste your token in Settings.")
     }
 
-    /// Get account info from ~/.claude.json
-    var accountInfo: ClaudeGlobalConfig.OAuthAccount? {
-        getParser()?.readGlobalConfig()?.oauthAccount
+    func refreshLocalState() async {
+        refreshLocalStateSync(force: true)
     }
 
-    /// Get subscription type
+    func fetchQuota() async throws -> QuotaData {
+        await refreshLocalState()
+        let result = withState { localState.detectionResult }
+
+        guard result.isDetected else {
+            throw ProviderError.notInstalled
+        }
+
+        guard let token = withState({ localState.accessToken }) else {
+            throw ProviderError.authRequired(
+                "No access token found. Run `claude` in your terminal to authenticate."
+            )
+        }
+
+        do {
+            let quota = try await fetchFromAPI(token: token)
+            withState {
+                cachedQuota = quota
+            }
+            return quota
+        } catch {
+            // Return cached data as stale if available
+            if let cached = withState({ cachedQuota }) {
+                return QuotaData(
+                    id: cached.id,
+                    provider: cached.provider,
+                    planName: cached.planName,
+                    windows: cached.windows,
+                    accountEmail: cached.accountEmail,
+                    fetchedAt: cached.fetchedAt,
+                    isStale: true
+                )
+            }
+            throw error
+        }
+    }
+
+    func validate() async throws -> Bool {
+        await refreshLocalState()
+        return withState { localState.detectionResult.isDetected && localState.accessToken != nil }
+    }
+
+    // MARK: - Account Info
+
+    var accountEmail: String? {
+        refreshLocalStateSync()
+        return withState { localState.accountEmail }
+    }
+
     var subscriptionType: String? {
-        ClaudeKeychainReader.subscriptionType
-            ?? accountInfo?.subscriptionType
+        refreshLocalStateSync()
+        return withState { localState.subscriptionType }
     }
 
-    /// Whether user is logged in (has OAuth creds)
+    var planDisplayName: String? {
+        guard let sub = subscriptionType else { return nil }
+        switch sub.lowercased() {
+        case "max": return "Max"
+        case "max_5x": return "Max 5x"
+        case "pro": return "Pro"
+        case "team": return "Team"
+        case "enterprise": return "Enterprise"
+        case "free": return "Free"
+        default: return sub.capitalized
+        }
+    }
+
     var isLoggedIn: Bool {
-        ClaudeKeychainReader.hasCredentials
+        refreshLocalStateSync()
+        return withState { localState.accessToken != nil }
     }
 
-    /// Detection strategy that was used
-    var activeStrategy: ClaudeCodeDetector.Strategy {
-        detectionResult?.strategy ?? .none
-    }
-
-    /// Human-readable detection status
-    var detectionMessage: String {
-        detectionResult?.message ?? "Not detected"
-    }
-
-    /// Get recently parsed sessions
-    var recentSessions: [ClaudeCodeSession] {
-        cachedSessions
+    /// Set a manually-provided token (from Settings onboarding)
+    func setManualToken(_ token: String) {
+        if token.isEmpty {
+            withState {
+                manualToken = nil
+            }
+            KeychainService.shared.delete(key: "claude-token")
+        } else {
+            withState {
+                manualToken = token
+            }
+            try? KeychainService.shared.save(key: "claude-token", value: token)
+        }
+        refreshLocalStateSync(force: true)
     }
 
     /// Set a custom config directory path
     func setCustomPath(_ path: String) {
         detector.customConfigPath = path.isEmpty ? nil : path
-        sessionParser = nil  // Reset parser to pick up new path
+        refreshLocalStateSync(force: true)
     }
 
-    // MARK: - UsageProvider
+    // MARK: - Auth Chain
 
-    func fetchUsage(for period: UsagePeriod) async throws -> UsageData {
-        let result = detector.detect()
-        detectionResult = result
-
-        guard result.isDetected else {
-            throw ProviderError.notConfigured
+    /// Resolve access token using fallback chain:
+    /// 1. Manual token (from settings onboarding)
+    /// 2. ~/.claude/.credentials.json file
+    /// 3. Keychain (silent read)
+    private func resolveAccessToken() -> String? {
+        // 1. Manual/saved token
+        if let manual = withState({ manualToken }), !manual.isEmpty {
+            return manual
         }
-
-        // Strategy: try local files first, fall back to API
-        if result.hasSessions, let parser = getParser() {
-            return try await fetchFromLocalFiles(parser: parser, period: period)
-        } else if result.hasOAuthCredentials && OAuthAPIFallback.isAvailable {
-            // No local session files but we have OAuth — use API
-            return try await fetchFromAPI(period: period)
-        } else {
-            // Only have config dir but no sessions yet
-            throw ProviderError.apiError(
-                "Claude Code detected but no session data found yet. "
-                + "Start a Claude Code session to see usage data here."
-            )
-        }
-    }
-
-    func validate() async throws -> Bool {
-        let result = detector.detect()
-        return result.isDetected
-    }
-
-    // MARK: - Data Source: Local Files
-
-    private func fetchFromLocalFiles(
-        parser: SessionParser,
-        period: UsagePeriod
-    ) async throws -> UsageData {
-        let sessions = parser.sessions(from: period.startDate, to: period.endDate)
-        cachedSessions = sessions
-
-        let statsCache = parser.readStatsCache()
-
-        // Aggregate session data
-        var totalInput = 0
-        var totalOutput = 0
-        var totalCacheRead = 0
-        var totalCacheCreation = 0
-        var totalCost: Double = 0
-        var modelData: [String: (input: Int, output: Int, cacheRead: Int, cacheCreation: Int, cost: Double)] = [:]
-
-        for session in sessions {
-            totalInput += session.totalInputTokens
-            totalOutput += session.totalOutputTokens
-            totalCacheRead += session.totalCacheReadTokens
-            totalCacheCreation += session.totalCacheCreationTokens
-            totalCost += session.costUSD
-
-            for model in session.models {
-                var current = modelData[model] ?? (0, 0, 0, 0, 0)
-                if model == session.model {
-                    current.input += session.totalInputTokens
-                    current.output += session.totalOutputTokens
-                    current.cacheRead += session.totalCacheReadTokens
-                    current.cacheCreation += session.totalCacheCreationTokens
-                    current.cost += session.costUSD
-                }
-                modelData[model] = current
+        if let saved = KeychainService.shared.get(key: "claude-token"), !saved.isEmpty {
+            withState {
+                manualToken = saved
             }
+            return saved
         }
 
-        // Cost fallback chain
-        if totalCost == 0, let modelUsage = statsCache?.modelUsage {
-            totalCost = estimateCostFromStats(
-                modelUsage: modelUsage,
-                inputTokens: totalInput,
-                outputTokens: totalOutput,
-                cacheReadTokens: totalCacheRead,
-                cacheCreationTokens: totalCacheCreation
-            )
+        // 2. Credentials file (~/.claude/.credentials.json)
+        if let fileToken = readCredentialsFile() {
+            return fileToken
         }
 
-        if totalCost == 0 {
-            totalCost = estimateCostFromPricing(
-                inputTokens: totalInput,
-                outputTokens: totalOutput,
-                cacheReadTokens: totalCacheRead
-            )
+        // 3. Keychain (silent read — uses kSecUseAuthenticationUISkip, NEVER prompts)
+        if let keychainToken = ClaudeKeychainReader.accessToken {
+            return keychainToken
         }
 
-        let breakdown = modelData.map { model, data in
-            UsageBreakdown(
-                model: model,
-                costUSD: Decimal(data.cost),
-                inputTokens: data.input,
-                outputTokens: data.output,
-                cacheReadTokens: data.cacheRead,
-                cacheCreationTokens: data.cacheCreation
+        return nil
+    }
+
+    private func refreshLocalStateSync(force: Bool = false) {
+        refreshLock.lock()
+        defer { refreshLock.unlock() }
+
+        if !force, Date().timeIntervalSince(withState({ localState.updatedAt })) < localStateTTL {
+            return
+        }
+
+        let detection = detector.detect(forceRefresh: force)
+        let globalConfig = readGlobalConfig()
+        let credentialsOAuth = readCredentialsFileOAuth()
+
+        let token = resolveAccessToken()
+        let email = globalConfig?.oauthAccount?.emailAddress
+        let subscription = globalConfig?.oauthAccount?.subscriptionType
+            ?? credentialsOAuth?.subscriptionType
+            ?? ClaudeKeychainReader.subscriptionType
+
+        withState {
+            localState = ClaudeProviderLocalState(
+                detectionResult: detection,
+                accessToken: token,
+                accountEmail: email,
+                subscriptionType: subscription,
+                updatedAt: Date()
             )
-        }.sorted { $0.totalTokens > $1.totalTokens }
+        }
+    }
 
-        let dailyTrend = buildDailyTrend(from: sessions, period: period)
+    /// Read OAuth data from ~/.claude/.credentials.json
+    private func readCredentialsFileOAuth() -> ClaudeOAuthCredentials.OAuthData? {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let credPath = home.appendingPathComponent(".claude/.credentials.json")
+        let decoder = JSONDecoder()
 
-        return UsageData(
+        guard let data = try? Data(contentsOf: credPath),
+              let creds = try? decoder.decode(ClaudeCredentialsFile.self, from: data),
+              let oauth = creds.claudeAiOauth else {
+            return nil
+        }
+        return oauth
+    }
+
+    /// Read access token from ~/.claude/.credentials.json
+    private func readCredentialsFile() -> String? {
+        guard let oauth = readCredentialsFileOAuth(),
+              !oauth.isExpired,
+              let token = oauth.accessToken else {
+            return nil
+        }
+        return token
+    }
+
+    /// Read global config from ~/.claude.json
+    private func readGlobalConfig() -> ClaudeGlobalConfig? {
+        let configPath = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".claude.json")
+        let decoder = JSONDecoder()
+        guard let data = try? Data(contentsOf: configPath) else { return nil }
+        return try? decoder.decode(ClaudeGlobalConfig.self, from: data)
+    }
+
+    // MARK: - API
+
+    /// Fetch quota from Claude API (same endpoint as claude-meter)
+    private func fetchFromAPI(token: String) async throws -> QuotaData {
+        let url = URL(string: "https://api.anthropic.com/api/oauth/usage")!
+
+        let headers = [
+            "Authorization": "Bearer \(token)",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": "QDock/1.0",
+            "anthropic-beta": "oauth-2025-04-20",
+        ]
+
+        let response = try await NetworkClient.shared.get(
+            url: url,
+            headers: headers,
+            responseType: ClaudeUsageResponse.self
+        )
+
+        return response.toQuotaData(
             provider: name,
-            period: period,
-            totalCostUSD: Decimal(totalCost),
-            inputTokens: totalInput,
-            outputTokens: totalOutput,
-            cacheReadTokens: totalCacheRead,
-            cacheCreationTokens: totalCacheCreation,
-            breakdown: breakdown,
-            dailyTrend: dailyTrend,
-            fetchedAt: Date()
+            planName: planDisplayName,
+            email: withState { localState.accountEmail }
         )
     }
 
-    // MARK: - Data Source: API Fallback
-
-    private func fetchFromAPI(period: UsagePeriod) async throws -> UsageData {
-        cachedSessions = []  // No session detail from API
-        return try await OAuthAPIFallback.fetchRecentUsage(for: period)
+    private func withState<T>(_ block: () -> T) -> T {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return block()
     }
+}
 
-    // MARK: - Cost Estimation
+private struct ClaudeProviderLocalState {
+    let detectionResult: ClaudeCodeDetector.DetectionResult
+    let accessToken: String?
+    let accountEmail: String?
+    let subscriptionType: String?
+    let updatedAt: Date
 
-    private func estimateCostFromStats(
-        modelUsage: [String: StatsCache.ModelUsageEntry],
-        inputTokens: Int,
-        outputTokens: Int,
-        cacheReadTokens: Int,
-        cacheCreationTokens: Int
-    ) -> Double {
-        var totalStatsTokens = 0
-        var totalStatsCost: Double = 0
-
-        for (_, usage) in modelUsage {
-            let tokens = (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0)
-                + (usage.cacheReadInputTokens ?? 0) + (usage.cacheCreationInputTokens ?? 0)
-            totalStatsTokens += tokens
-            totalStatsCost += usage.costUSD ?? 0
-        }
-
-        guard totalStatsTokens > 0 else {
-            return estimateCostFromPricing(
-                inputTokens: inputTokens,
-                outputTokens: outputTokens,
-                cacheReadTokens: cacheReadTokens
-            )
-        }
-
-        let avgCostPerToken = totalStatsCost / Double(totalStatsTokens)
-        let totalTokens = inputTokens + outputTokens + cacheReadTokens + cacheCreationTokens
-        return avgCostPerToken * Double(totalTokens)
-    }
-
-    private func estimateCostFromPricing(
-        inputTokens: Int,
-        outputTokens: Int,
-        cacheReadTokens: Int
-    ) -> Double {
-        // Approximate pricing (Claude Sonnet 4 as default)
-        // Input: $3/MTok, Output: $15/MTok, Cache read: $0.30/MTok
-        let inputCost = Double(inputTokens) / 1_000_000 * 3.0
-        let outputCost = Double(outputTokens) / 1_000_000 * 15.0
-        let cacheCost = Double(cacheReadTokens) / 1_000_000 * 0.30
-        return inputCost + outputCost + cacheCost
-    }
-
-    // MARK: - Helpers
-
-    private func getParser() -> SessionParser? {
-        if let parser = sessionParser { return parser }
-
-        let result = detector.detect()
-        guard let configDir = result.configDir else { return nil }
-
-        let parser = SessionParser(claudeDir: configDir)
-        sessionParser = parser
-        return parser
-    }
-
-    private func buildDailyTrend(
-        from sessions: [ClaudeCodeSession],
-        period: UsagePeriod
-    ) -> [DailyUsage] {
-        guard period != .today && period != .yesterday else { return [] }
-
-        var dailyData: [String: (input: Int, output: Int, cost: Double)] = [:]
-        let dateFormatter = DateFormatter()
-        dateFormatter.dateFormat = "yyyy-MM-dd"
-
-        for session in sessions {
-            guard let startTime = session.startTime else { continue }
-            let dayKey = dateFormatter.string(from: startTime)
-            var current = dailyData[dayKey] ?? (0, 0, 0)
-            current.input += session.totalInputTokens
-            current.output += session.totalOutputTokens
-            current.cost += session.costUSD
-            dailyData[dayKey] = current
-        }
-
-        return dailyData.compactMap { dayKey, data in
-            guard let date = dateFormatter.date(from: dayKey) else { return nil }
-            return DailyUsage(
-                date: date,
-                costUSD: Decimal(data.cost),
-                inputTokens: data.input,
-                outputTokens: data.output
-            )
-        }.sorted { $0.date < $1.date }
+    static var empty: ClaudeProviderLocalState {
+        ClaudeProviderLocalState(
+            detectionResult: .notFound,
+            accessToken: nil,
+            accountEmail: nil,
+            subscriptionType: nil,
+            updatedAt: .distantPast
+        )
     }
 }

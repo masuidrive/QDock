@@ -3,16 +3,20 @@
 import PackageDescription
 
 let package = Package(
-    name: "UsageBar",
+    name: "QDock",
     platforms: [
         .macOS(.v14)
     ],
     targets: [
         .executableTarget(
-            name: "UsageBar",
+            name: "QDock",
             path: "UsageBar",
             exclude: [
-                "Resources/Info.plist"
+                "Resources/Info.plist",
+                "Resources/IconExports"
+            ],
+            resources: [
+                .process("Resources/Assets.xcassets")
             ]
         )
     ]

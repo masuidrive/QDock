@@ -5,6 +5,17 @@ final class NetworkClient {
     static let shared = NetworkClient()
 
     private let session: URLSession
+    private static let isoFractionalFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+    private static let isoFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
+    private static let formatterLock = NSLock()
 
     private init() {
         let config = URLSessionConfiguration.default
@@ -38,7 +49,12 @@ final class NetworkClient {
         }
 
         let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let container = try decoder.singleValueContainer()
+            let str = try container.decode(String.self)
+            if let date = Self.parseISO8601Date(str) { return date }
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Invalid ISO8601 date: \(str)")
+        }
         decoder.keyDecodingStrategy = .convertFromSnakeCase
 
         do {
@@ -46,6 +62,15 @@ final class NetworkClient {
         } catch {
             throw NetworkError.decodingFailed(error)
         }
+    }
+
+    private static func parseISO8601Date(_ value: String) -> Date? {
+        formatterLock.lock()
+        defer { formatterLock.unlock() }
+        if let date = isoFractionalFormatter.date(from: value) {
+            return date
+        }
+        return isoFormatter.date(from: value)
     }
 }
 

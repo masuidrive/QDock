@@ -1,39 +1,91 @@
 import Foundation
 
-/// OpenAI Codex CLI usage provider
-/// Reads local session history from ~/.codex/history.jsonl
-/// Optionally augments with OpenAI Usage API for cost data
+/// OpenAI Codex CLI quota provider
+/// Uses `codex app-server` JSON-RPC to fetch rate limit data
 ///
-/// Detection: ~/.codex/ directory
-/// Local data: history.jsonl (JSONL session transcripts)
-/// API fallback: Uses OpenAI admin key if available (shares with OpenAIProvider)
-final class CodexProvider: UsageProvider {
+/// Detection: ~/.codex/ directory or codex binary in PATH
+/// Data: JSON-RPC via stdio to `codex app-server`
+final class CodexProvider: QuotaProvider {
     let id = "codex"
     let name = "Codex CLI"
     let iconName = "apple.terminal"
     let brandColorHex = "#10A37F"
-    var isEnabled: Bool = true
-
-    let apiKeyDescription = "No API key needed for local data. Optionally add an OpenAI Admin key for cost tracking."
-    let apiKeyPlaceholder = "sk-admin-..."
+    var isEnabled: Bool = false
 
     private let codexDir: URL
+    private let appServer = CodexAppServer()
+    private var cachedQuota: QuotaData?
+    private var localState = CodexLocalState.empty
+    private let localStateTTL: TimeInterval = 30
+    private let stateLock = NSLock()
+    private let refreshLock = NSLock()
 
     init() {
         codexDir = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".codex")
+        refreshLocalStateSync(force: true)
     }
 
-    /// Configured if Codex directory exists
+    // MARK: - QuotaProvider
+
     var isConfigured: Bool {
-        FileManager.default.fileExists(atPath: codexDir.path)
+        refreshLocalStateSync()
+        return isInstalled
     }
 
-    /// Check if Codex CLI is installed
-    static var isInstalled: Bool {
-        let path = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".codex")
-        return FileManager.default.fileExists(atPath: path.path)
+    var authStatus: AuthStatus {
+        refreshLocalStateSync()
+        guard isInstalled else {
+            return .notInstalled(message: "Codex CLI not detected. Install via npm: npm i -g @openai/codex")
+        }
+        // Codex uses its own auth — no extra setup needed
+        return .authenticated(email: nil)
+    }
+
+    func refreshLocalState() async {
+        refreshLocalStateSync(force: true)
+    }
+
+    func fetchQuota() async throws -> QuotaData {
+        await refreshLocalState()
+
+        guard isInstalled else {
+            throw ProviderError.notInstalled
+        }
+
+        do {
+            let rateLimits = try await appServer.fetchRateLimits()
+            let quota = buildQuotaData(from: rateLimits)
+            withState {
+                cachedQuota = quota
+            }
+            return quota
+        } catch {
+            // Return cached data as stale if available
+            if let cached = withState({ cachedQuota }) {
+                return QuotaData(
+                    id: cached.id,
+                    provider: cached.provider,
+                    planName: cached.planName,
+                    windows: cached.windows,
+                    accountEmail: cached.accountEmail,
+                    fetchedAt: cached.fetchedAt,
+                    isStale: true
+                )
+            }
+            throw error
+        }
+    }
+
+    func validate() async throws -> Bool {
+        await refreshLocalState()
+        return isInstalled
+    }
+
+    // MARK: - Detection
+
+    var isInstalled: Bool {
+        withState { localState.isInstalled }
     }
 
     /// Read Codex config
@@ -41,193 +93,114 @@ final class CodexProvider: UsageProvider {
         CodexConfig.read()
     }
 
-    // MARK: - UsageProvider
+    var planDisplayName: String? {
+        // Codex doesn't expose plan info easily; return nil
+        nil
+    }
 
-    func fetchUsage(for period: UsagePeriod) async throws -> UsageData {
-        guard isConfigured else { throw ProviderError.notConfigured }
+    // MARK: - Helpers
 
-        // Read local history
-        let entries = readHistory(from: period.startDate, to: period.endDate)
+    private func buildQuotaData(from rateLimits: RateLimitsResult) -> QuotaData {
+        var windows: [QuotaWindow] = []
 
-        // Aggregate
-        var modelData: [String: (input: Int, output: Int, cost: Double, requests: Int)] = [:]
+        if let primary = rateLimits.primary {
+            let resetDate: Date? = {
+                guard let ts = primary.resetsAt else { return nil }
+                return Date(timeIntervalSince1970: TimeInterval(ts))
+            }()
 
-        for entry in entries {
-            let model = entry.model ?? "unknown"
-            var current = modelData[model] ?? (0, 0, 0, 0)
-            current.input += entry.promptTokens ?? 0
-            current.output += entry.completionTokens ?? 0
-            current.cost += entry.cost ?? 0
-            current.requests += 1
-            modelData[model] = current
+            windows.append(QuotaWindow(
+                id: "session",
+                displayName: "Session",
+                usagePercent: primary.usedPercent ?? 0,
+                resetsAt: resetDate,
+                windowDurationMinutes: primary.windowDurationMins
+            ))
         }
 
-        let totalInput = modelData.values.reduce(0) { $0 + $1.input }
-        let totalOutput = modelData.values.reduce(0) { $0 + $1.output }
-        var totalCost = Decimal(modelData.values.reduce(0.0) { $0 + $1.cost })
+        if let secondary = rateLimits.secondary {
+            let resetDate: Date? = {
+                guard let ts = secondary.resetsAt else { return nil }
+                return Date(timeIntervalSince1970: TimeInterval(ts))
+            }()
 
-        // If no cost from local data, try OpenAI API
-        if totalCost == 0 {
-            totalCost = await fetchCostFromOpenAI(period: period)
+            windows.append(QuotaWindow(
+                id: "weekly",
+                displayName: "Weekly",
+                usagePercent: secondary.usedPercent ?? 0,
+                resetsAt: resetDate,
+                windowDurationMinutes: secondary.windowDurationMins
+            ))
         }
 
-        let breakdown = modelData.map { model, data in
-            UsageBreakdown(
-                model: model,
-                costUSD: Decimal(data.cost),
-                inputTokens: data.input,
-                outputTokens: data.output,
-                cacheReadTokens: 0,
-                cacheCreationTokens: 0
-            )
-        }.sorted { $0.totalTokens > $1.totalTokens }
+        let resolvedPlanName = rateLimits.planType.map { formatPlanName($0) } ?? planDisplayName
 
-        // Daily trend
-        let dailyTrend = buildDailyTrend(from: entries, period: period)
-
-        return UsageData(
+        return QuotaData(
+            id: "codex",
             provider: name,
-            period: period,
-            totalCostUSD: totalCost,
-            inputTokens: totalInput,
-            outputTokens: totalOutput,
-            cacheReadTokens: 0,
-            cacheCreationTokens: 0,
-            breakdown: breakdown,
-            dailyTrend: dailyTrend,
-            fetchedAt: Date()
+            planName: resolvedPlanName,
+            windows: windows,
+            accountEmail: nil,
+            fetchedAt: Date(),
+            isStale: false
         )
     }
 
-    func validate() async throws -> Bool {
-        return isConfigured
+    private func formatPlanName(_ rawPlanType: String) -> String {
+        switch rawPlanType.lowercased() {
+        case "free": return "Free"
+        case "go": return "Go"
+        case "plus": return "Plus"
+        case "pro": return "Pro"
+        case "team": return "Team"
+        case "business": return "Business"
+        case "enterprise": return "Enterprise"
+        case "edu": return "Edu"
+        default:
+            return rawPlanType.capitalized
+        }
     }
 
-    // MARK: - Local History
+    private func refreshLocalStateSync(force: Bool = false) {
+        refreshLock.lock()
+        defer { refreshLock.unlock() }
 
-    private func readHistory(from startDate: Date, to endDate: Date) -> [CodexHistoryEntry] {
-        let historyPath = codexDir.appendingPathComponent("history.jsonl")
-        guard let content = try? String(contentsOf: historyPath, encoding: .utf8) else {
-            return []
+        if !force, Date().timeIntervalSince(withState({ localState.updatedAt })) < localStateTTL {
+            return
         }
 
-        let decoder = JSONDecoder()
-        let dateFormatter = ISO8601DateFormatter()
-        dateFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-
-        let fallbackFormatter = ISO8601DateFormatter()
-        fallbackFormatter.formatOptions = [.withInternetDateTime]
-
-        var entries: [CodexHistoryEntry] = []
-
-        for line in content.components(separatedBy: .newlines) {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            guard !trimmed.isEmpty else { continue }
-            guard let data = trimmed.data(using: .utf8) else { continue }
-
-            guard let entry = try? decoder.decode(CodexHistoryEntry.self, from: data) else {
-                continue
-            }
-
-            // Filter by date
-            if let ts = entry.timestamp {
-                let date = dateFormatter.date(from: ts) ?? fallbackFormatter.date(from: ts)
-                if let date = date {
-                    if date < startDate || date > endDate {
-                        continue
-                    }
-                }
-            }
-
-            entries.append(entry)
-        }
-
-        return entries
-    }
-
-    // MARK: - OpenAI API Fallback
-
-    private func fetchCostFromOpenAI(period: UsagePeriod) async -> Decimal {
-        // Check if OpenAI admin key is available (shared with OpenAIProvider)
-        guard let key = KeychainService.shared.get(key: "openai-api-key"), !key.isEmpty else {
-            return 0
-        }
-
-        let startTimestamp = Int(period.startDate.timeIntervalSince1970)
-        let endTimestamp = Int(period.endDate.timeIntervalSince1970)
-
-        var components = URLComponents(string: "https://api.openai.com/v1/organization/costs")
-        components?.queryItems = [
-            URLQueryItem(name: "start_time", value: String(startTimestamp)),
-            URLQueryItem(name: "end_time", value: String(endTimestamp)),
-            URLQueryItem(name: "bucket_width", value: "1d"),
-        ]
-
-        guard let url = components?.url else { return 0 }
-
-        let headers = [
-            "Authorization": "Bearer \(key)",
-            "Content-Type": "application/json",
-        ]
-
-        do {
-            let response = try await NetworkClient.shared.get(
-                url: url,
-                headers: headers,
-                responseType: OpenAICostResponse.self
+        let hasCodexDir = FileManager.default.fileExists(atPath: codexDir.path)
+        let binaryPath = appServer.findCodexBinaryPublic()
+        withState {
+            localState = CodexLocalState(
+                hasCodexDirectory: hasCodexDir,
+                binaryPath: binaryPath,
+                updatedAt: Date()
             )
-            var total: Double = 0
-            for bucket in response.data {
-                for result in bucket.results ?? [] {
-                    total += result.amount?.value ?? 0
-                }
-            }
-            return Decimal(total) / 100
-        } catch {
-            return 0
         }
     }
 
-    // MARK: - Daily Trend
+    private func withState<T>(_ block: () -> T) -> T {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return block()
+    }
+}
 
-    private func buildDailyTrend(
-        from entries: [CodexHistoryEntry],
-        period: UsagePeriod
-    ) -> [DailyUsage] {
-        guard period != .today && period != .yesterday else { return [] }
+private struct CodexLocalState {
+    let hasCodexDirectory: Bool
+    let binaryPath: String?
+    let updatedAt: Date
 
-        let dateFormatter = DateFormatter()
-        dateFormatter.dateFormat = "yyyy-MM-dd"
+    var isInstalled: Bool {
+        hasCodexDirectory && binaryPath != nil
+    }
 
-        let isoFormatter = ISO8601DateFormatter()
-        isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let fallback = ISO8601DateFormatter()
-        fallback.formatOptions = [.withInternetDateTime]
-
-        var dailyData: [String: (input: Int, output: Int, cost: Double)] = [:]
-
-        for entry in entries {
-            guard let ts = entry.timestamp,
-                  let date = isoFormatter.date(from: ts) ?? fallback.date(from: ts) else {
-                continue
-            }
-
-            let dayKey = dateFormatter.string(from: date)
-            var current = dailyData[dayKey] ?? (0, 0, 0)
-            current.input += entry.promptTokens ?? 0
-            current.output += entry.completionTokens ?? 0
-            current.cost += entry.cost ?? 0
-            dailyData[dayKey] = current
-        }
-
-        return dailyData.compactMap { dayKey, data in
-            guard let date = dateFormatter.date(from: dayKey) else { return nil }
-            return DailyUsage(
-                date: date,
-                costUSD: Decimal(data.cost),
-                inputTokens: data.input,
-                outputTokens: data.output
-            )
-        }.sorted { $0.date < $1.date }
+    static var empty: CodexLocalState {
+        CodexLocalState(
+            hasCodexDirectory: false,
+            binaryPath: nil,
+            updatedAt: .distantPast
+        )
     }
 }

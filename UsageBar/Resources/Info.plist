@@ -3,11 +3,13 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>UsageBar</string>
+    <string>QDock</string>
     <key>CFBundleDisplayName</key>
-    <string>UsageBar</string>
+    <string>QDock</string>
     <key>CFBundleIdentifier</key>
-    <string>com.usagebar.app</string>
+    <string>com.qdock.app</string>
+    <key>CFBundleIconName</key>
+    <string>AppIconPremium</string>
     <key>CFBundleVersion</key>
     <string>1</string>
     <key>CFBundleShortVersionString</key>

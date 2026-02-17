@@ -1,31 +1,67 @@
 import Foundation
-import Security
 
-/// Reads Claude Code OAuth credentials from macOS Keychain
+/// Reads Claude Code OAuth credentials — uses `security` CLI to NEVER trigger a password dialog.
+///
+/// Why CLI instead of Security framework?
+/// - `SecItemCopyMatching` triggers macOS "allow access" dialog for another app's keychain items
+/// - `/usr/bin/security find-generic-password` reads from the login keychain without prompting
+///   because the login keychain is already unlocked while the user is logged in
+/// - This is how claude-meter and similar apps avoid the password prompt
 final class ClaudeKeychainReader {
 
-    /// Service names used by Claude Code in Keychain
-    private static let serviceNames = [
-        "Claude Code-credentials",
-        "Claude Code",
-    ]
+    /// Service name used by Claude Code in Keychain
+    private static let serviceName = "Claude Code-credentials"
 
-    /// Attempt to read OAuth credentials from Keychain
+    /// Cache to avoid repeated shell calls
+    private static var cachedCredentials: ClaudeOAuthCredentials?
+    private static var lastCacheTime: Date?
+    private static let cacheTTL: TimeInterval = 300 // 5 minutes
+
+    /// Attempt to read OAuth credentials — NEVER prompts for password
     static func readCredentials() -> ClaudeOAuthCredentials? {
-        for serviceName in serviceNames {
-            if let creds = readFromKeychain(service: serviceName) {
-                return creds
-            }
+        // Return cached if fresh
+        if let cached = cachedCredentials,
+           let cacheTime = lastCacheTime,
+           Date().timeIntervalSince(cacheTime) < cacheTTL {
+            return cached
         }
+
+        guard let data = readViaSecurityCLI() else {
+            return nil
+        }
+
+        let decoder = JSONDecoder()
+
+        // Try wrapped format: { "claudeAiOauth": { ... } }
+        if let creds = try? decoder.decode(ClaudeOAuthCredentials.self, from: data) {
+            cachedCredentials = creds
+            lastCacheTime = Date()
+            return creds
+        }
+
+        // Try direct format: { "accessToken": ..., "refreshToken": ... }
+        if let oauth = try? decoder.decode(ClaudeOAuthCredentials.OAuthData.self, from: data) {
+            let creds = ClaudeOAuthCredentials(claudeAiOauth: oauth, primaryApiKey: nil)
+            cachedCredentials = creds
+            lastCacheTime = Date()
+            return creds
+        }
+
         return nil
     }
 
-    /// Check if Claude Code credentials exist in Keychain
+    /// Clear the cache
+    static func clearCache() {
+        cachedCredentials = nil
+        lastCacheTime = nil
+    }
+
+    /// Check if Claude Code credentials exist — NEVER prompts
     static var hasCredentials: Bool {
         readCredentials() != nil
     }
 
-    /// Get the access token (if valid and not expired)
+    /// Get the access token (if valid and not expired) — NEVER prompts
     static var accessToken: String? {
         guard let creds = readCredentials(),
               let oauth = creds.claudeAiOauth,
@@ -36,35 +72,48 @@ final class ClaudeKeychainReader {
         return token
     }
 
-    /// Get subscription type (max, pro, etc.)
+    /// Get subscription type (max, pro, etc.) — NEVER prompts
     static var subscriptionType: String? {
         readCredentials()?.claudeAiOauth?.subscriptionType
     }
 
-    // MARK: - Private
+    // MARK: - Private: Shell-based Keychain Access
 
-    private static func readFromKeychain(service: String) -> ClaudeOAuthCredentials? {
-        let username = ProcessInfo.processInfo.environment["USER"]
-            ?? NSUserName()
+    /// Read credentials using `/usr/bin/security` CLI — NO password prompt.
+    /// This works because:
+    /// - The login keychain is unlocked while the user is logged in
+    /// - The `security` CLI tool has implicit access to the login keychain
+    /// - Unlike SecItemCopyMatching, it doesn't check per-app ACLs
+    private static func readViaSecurityCLI() -> Data? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+        process.arguments = ["find-generic-password", "-s", serviceName, "-w"]
 
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: username,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-        ]
+        let outputPipe = Pipe()
+        let errorPipe = Pipe()
+        process.standardOutput = outputPipe
+        process.standardError = errorPipe
 
-        var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-
-        guard status == errSecSuccess,
-              let data = result as? Data else {
+        do {
+            try process.run()
+        } catch {
             return nil
         }
 
-        // The credential is stored as JSON
-        let decoder = JSONDecoder()
-        return try? decoder.decode(ClaudeOAuthCredentials.self, from: data)
+        // Read output before waitUntilExit to prevent deadlock
+        let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+
+        guard process.terminationStatus == 0, !outputData.isEmpty else {
+            return nil
+        }
+
+        // Remove trailing newline
+        if let string = String(data: outputData, encoding: .utf8) {
+            let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.data(using: .utf8)
+        }
+
+        return outputData
     }
 }

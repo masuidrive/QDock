@@ -1,63 +1,128 @@
 import Foundation
 
-/// Represents aggregated usage data from a single provider
-struct UsageData: Identifiable, Equatable {
-    let id = UUID()
-    let provider: String
-    let period: UsagePeriod
-    let totalCostUSD: Decimal
-    let inputTokens: Int
-    let outputTokens: Int
-    let cacheReadTokens: Int
-    let cacheCreationTokens: Int
-    let breakdown: [UsageBreakdown]
-    let dailyTrend: [DailyUsage]
+// MARK: - QuotaWindow
+
+/// A single usage quota window (e.g., 5-hour session or 7-day weekly)
+struct QuotaWindow: Identifiable, Equatable {
+    let id: String                      // "session", "weekly"
+    let displayName: String             // "Session (5h)", "Weekly"
+    let usagePercent: Double            // 0.0 - 100.0
+    let resetsAt: Date?                 // When the window resets
+    let windowDurationMinutes: Int?     // Duration of the window in minutes
+
+    /// Time remaining until reset
+    var timeUntilReset: TimeInterval? {
+        guard let resetsAt = resetsAt else { return nil }
+        let remaining = resetsAt.timeIntervalSinceNow
+        return remaining > 0 ? remaining : nil
+    }
+
+    /// Formatted countdown string (e.g., "2h 47m" or "3d 4h")
+    var resetCountdown: String? {
+        guard let remaining = timeUntilReset else { return nil }
+        let totalMinutes = Int(remaining) / 60
+        let days = totalMinutes / 1440
+        let hours = (totalMinutes % 1440) / 60
+        let minutes = totalMinutes % 60
+
+        if days > 0 {
+            return "\(days)d \(hours)h"
+        } else if hours > 0 {
+            return "\(hours)h \(minutes)m"
+        } else {
+            return "\(minutes)m"
+        }
+    }
+
+    /// Usage level for color coding
+    var level: UsageLevel {
+        UsageLevel.from(percent: usagePercent)
+    }
+}
+
+// MARK: - QuotaData
+
+/// All quota data for a single provider
+struct QuotaData: Identifiable, Equatable {
+    let id: String                      // matches provider id
+    let provider: String                // display name
+    let planName: String?               // "Pro", "Max 5x", "Plus"
+    let windows: [QuotaWindow]          // session + weekly
+    let accountEmail: String?
     let fetchedAt: Date
+    let isStale: Bool                   // true if from cache (offline)
 
-    var totalTokens: Int {
-        inputTokens + outputTokens + cacheReadTokens + cacheCreationTokens
+    /// The highest usage percent across all windows
+    var maxUsagePercent: Double {
+        windows.map(\.usagePercent).max() ?? 0
     }
 
-    static func == (lhs: UsageData, rhs: UsageData) -> Bool {
-        lhs.id == rhs.id
+    /// The window with the highest usage
+    var primaryWindow: QuotaWindow? {
+        windows.max(by: { $0.usagePercent < $1.usagePercent })
     }
 
-    static var empty: UsageData {
-        UsageData(
+    /// The session window (5-hour)
+    var sessionWindow: QuotaWindow? {
+        windows.first { $0.id == "session" || $0.id == "five_hour" }
+    }
+
+    /// The weekly window (7-day)
+    var weeklyWindow: QuotaWindow? {
+        windows.first { $0.id == "weekly" || $0.id == "seven_day" }
+    }
+
+    /// Earliest reset time across all windows
+    var earliestReset: Date? {
+        windows.compactMap(\.resetsAt).min()
+    }
+
+    /// Usage level based on the highest window
+    var level: UsageLevel {
+        UsageLevel.from(percent: maxUsagePercent)
+    }
+
+    static func == (lhs: QuotaData, rhs: QuotaData) -> Bool {
+        lhs.id == rhs.id && lhs.fetchedAt == rhs.fetchedAt
+    }
+
+    static var empty: QuotaData {
+        QuotaData(
+            id: "",
             provider: "",
-            period: .today,
-            totalCostUSD: 0,
-            inputTokens: 0,
-            outputTokens: 0,
-            cacheReadTokens: 0,
-            cacheCreationTokens: 0,
-            breakdown: [],
-            dailyTrend: [],
-            fetchedAt: Date()
+            planName: nil,
+            windows: [],
+            accountEmail: nil,
+            fetchedAt: Date(),
+            isStale: false
         )
     }
 }
 
-/// Per-model breakdown of usage
-struct UsageBreakdown: Identifiable, Hashable {
-    let id = UUID()
-    let model: String
-    let costUSD: Decimal
-    let inputTokens: Int
-    let outputTokens: Int
-    let cacheReadTokens: Int
-    let cacheCreationTokens: Int
+// MARK: - UsageLevel
 
-    var totalTokens: Int {
-        inputTokens + outputTokens + cacheReadTokens + cacheCreationTokens
+/// Color-coded usage severity levels
+enum UsageLevel {
+    case low        // 0-50%   green
+    case moderate   // 50-75%  yellow
+    case high       // 75-90%  orange
+    case critical   // 90%+    red
+
+    static func from(percent: Double) -> UsageLevel {
+        switch percent {
+        case 0..<50: return .low
+        case 50..<75: return .moderate
+        case 75..<90: return .high
+        default: return .critical
+        }
     }
-}
 
-/// Daily usage for trend charts
-struct DailyUsage: Identifiable {
-    let id = UUID()
-    let date: Date
-    let costUSD: Decimal
-    let inputTokens: Int
-    let outputTokens: Int
+    var colorName: String {
+        switch self {
+        case .low: return "green"
+        case .moderate: return "yellow"
+        case .high: return "orange"
+        case .critical: return "red"
+        }
+    }
 }

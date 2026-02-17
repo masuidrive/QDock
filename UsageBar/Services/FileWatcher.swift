@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 
 /// Watches for file system changes to detect late Claude Code installation
 /// or new session files being created
@@ -65,8 +66,9 @@ final class FileWatcher {
 /// Watches the ~/.claude/projects/ directory for new session files
 /// and triggers a refresh when new data is available
 @MainActor
-final class SessionFileWatcher: ObservableObject {
-    @Published var lastChangeDetected: Date?
+@Observable
+final class SessionFileWatcher {
+    var lastChangeDetected: Date?
 
     private var projectsWatcher: FileWatcher?
     private var claudeDirWatcher: FileWatcher?

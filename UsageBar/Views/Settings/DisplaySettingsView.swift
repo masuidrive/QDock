@@ -1,10 +1,13 @@
 import SwiftUI
+import Observation
 
 /// Display preferences settings
 struct DisplaySettingsView: View {
-    @ObservedObject var appState: AppState
-    @AppStorage("refreshIntervalSeconds") private var refreshInterval: Double = 900
-    @AppStorage("showCostInMenuBarPref") private var showCostInMenuBar: Bool = false
+    @Bindable var appState: AppState
+
+    private var menuBarUsageSource: MenuBarUsageSource {
+        MenuBarUsageSource(rawValue: appState.menuBarUsageSourceRaw) ?? .highestUsage
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -14,17 +17,14 @@ struct DisplaySettingsView: View {
                     .font(.callout)
                     .fontWeight(.medium)
 
-                Picker("", selection: $refreshInterval) {
+                Picker("", selection: $appState.refreshIntervalSeconds) {
                     ForEach(RefreshInterval.allCases) { interval in
                         Text(interval.displayName).tag(interval.rawValue)
                     }
                 }
                 .pickerStyle(.menu)
-                .onChange(of: refreshInterval) { _, newValue in
-                    appState.refreshService.updateInterval(newValue)
-                }
 
-                Text("How often usage data is automatically refreshed. Data from Anthropic has ~5 min delay.")
+                Text("How often quota data is refreshed. Higher usage triggers more frequent checks automatically.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -37,14 +37,33 @@ struct DisplaySettingsView: View {
                     .font(.callout)
                     .fontWeight(.medium)
 
-                Toggle("Show total cost in menu bar", isOn: $showCostInMenuBar)
+                Toggle("Show usage percent in menu bar", isOn: $appState.showPercentInMenuBar)
                     .toggleStyle(.switch)
                     .controlSize(.small)
-                    .onChange(of: showCostInMenuBar) { _, newValue in
-                        appState.showCostInMenuBar = newValue
-                    }
 
-                Text("Display today's total cost next to the menu bar icon.")
+                Picker("Usage source", selection: $appState.menuBarUsageSourceRaw) {
+                    ForEach(MenuBarUsageSource.allCases) { source in
+                        Text(source.displayName).tag(source.rawValue)
+                    }
+                }
+                .pickerStyle(.menu)
+
+                if menuBarUsageSource == .selectedProvider {
+                    if appState.availableMenuBarProviders.isEmpty {
+                        Text("Enable at least one detected provider to choose a menu bar source.")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    } else {
+                        Picker("Provider", selection: $appState.menuBarProviderId) {
+                            ForEach(appState.availableMenuBarProviders, id: \.id) { provider in
+                                Text(provider.name).tag(provider.id)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                    }
+                }
+
+                Text("Menu bar percent and icon color are based on the source selected above.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -52,5 +71,9 @@ struct DisplaySettingsView: View {
             Spacer()
         }
         .padding(16)
+        .onAppear {
+            appState.ensureMenuBarProviderSelection()
+            appState.emitMenuBarPresentationIfNeeded()
+        }
     }
 }

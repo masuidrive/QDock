@@ -2,7 +2,7 @@ import SwiftUI
 
 /// Provider configuration settings
 struct ProvidersSettingsView: View {
-    @ObservedObject var appState: AppState
+    let appState: AppState
 
     var body: some View {
         VStack(spacing: 16) {
@@ -19,27 +19,8 @@ struct ProvidersSettingsView: View {
 
 /// Individual provider configuration card
 struct ProviderSettingCard: View {
-    let provider: any UsageProvider
-    @ObservedObject var appState: AppState
-    @State private var apiKeyInput: String = ""
-    @State private var isShowingKey: Bool = false
-    @State private var isValidating: Bool = false
-    @State private var validationResult: ValidationResult?
-
-    enum ValidationResult {
-        case success
-        case failure(String)
-    }
-
-    /// Providers that auto-detect without API key
-    private var isAutoDetectedProvider: Bool {
-        ["claude-code-local", "cursor", "codex"].contains(provider.id)
-    }
-
-    /// Providers that need extra config fields
-    private var needsExtraConfig: Bool {
-        ["copilot", "windsurf"].contains(provider.id)
-    }
+    let provider: any QuotaProvider
+    let appState: AppState
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -53,307 +34,214 @@ struct ProviderSettingCard: View {
                     .font(.callout)
                     .fontWeight(.medium)
 
-                if isAutoDetectedProvider && provider.isConfigured {
-                    Text("AUTO")
-                        .font(.system(size: 8, weight: .bold))
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 1)
-                        .background(.green.opacity(0.15))
-                        .foregroundStyle(.green)
-                        .clipShape(Capsule())
-                }
+                authStatusBadge
 
                 Spacer()
 
                 Toggle("", isOn: Binding(
                     get: { provider.isEnabled },
-                    set: { _ in appState.providerManager.toggleProvider(provider.id) }
+                    set: { _ in appState.toggleProvider(provider.id) }
                 ))
                 .toggleStyle(.switch)
                 .controlSize(.small)
             }
 
-            // Description
-            Text(provider.apiKeyDescription)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            // Provider-specific config views
+            // Provider-specific status view
             switch provider.id {
-            case "claude-code-local":
+            case "claude-code":
                 claudeCodeStatusView
-            case "cursor":
-                cursorStatusView
             case "codex":
                 codexStatusView
-            case "copilot":
-                copilotConfigView
-                apiKeyInputView
-            case "windsurf":
-                windsurfStatusView
-                apiKeyInputView
             default:
-                apiKeyInputView
+                EmptyView()
             }
         }
-        .padding(12)
+        .padding(14)
         .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(.primary.opacity(0.03))
+            RoundedRectangle(cornerRadius: 12)
+                .fill(.ultraThinMaterial)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(.primary.opacity(0.06), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color.white.opacity(0.05), lineWidth: 0.5)
                 )
         )
-        .onAppear {
-            apiKeyInput = appState.providerManager.getAPIKey(for: provider.id)
+        .task(id: provider.id) {
+            await appState.providerManager.refreshProviderLocalState(for: provider.id)
         }
     }
 
-    // MARK: - Claude Code Status View
+    // MARK: - Auth Status Badge
 
-    @State private var customPath: String = ""
-    @State private var showCustomPath: Bool = false
+    @ViewBuilder
+    private var authStatusBadge: some View {
+        let status = provider.authStatus
+
+        switch status {
+        case .authenticated:
+            Text("AUTH")
+                .font(.system(size: 8, weight: .bold))
+                .padding(.horizontal, 5)
+                .padding(.vertical, 2)
+                .background(Color.usageGreen.opacity(0.15))
+                .foregroundStyle(Color.usageGreen)
+                .clipShape(Capsule())
+        case .needsAuth:
+            Text("SETUP")
+                .font(.system(size: 8, weight: .bold))
+                .padding(.horizontal, 5)
+                .padding(.vertical, 2)
+                .background(Color.usageOrange.opacity(0.15))
+                .foregroundStyle(Color.usageOrange)
+                .clipShape(Capsule())
+        case .notInstalled:
+            Text("N/A")
+                .font(.system(size: 8, weight: .bold))
+                .padding(.horizontal, 5)
+                .padding(.vertical, 2)
+                .background(.gray.opacity(0.15))
+                .foregroundStyle(.gray)
+                .clipShape(Capsule())
+        }
+    }
+
+    // MARK: - Claude Code Status
+
+    @State private var tokenInput: String = ""
+    @State private var showTokenInput: Bool = false
 
     @ViewBuilder
     private var claudeCodeStatusView: some View {
         let ccProvider = provider as? ClaudeCodeProvider
 
         VStack(alignment: .leading, spacing: 8) {
-            // Detection strategy badge
+            // Detection status
             if let result = ccProvider?.detectionResult {
                 HStack(spacing: 6) {
                     Image(systemName: result.isDetected ? "checkmark.circle.fill" : "exclamationmark.triangle")
-                        .foregroundStyle(result.isDetected ? .green : .orange)
+                        .foregroundStyle(result.isDetected ? Color.usageGreen : Color.usageOrange)
                         .font(.caption)
-                    Text(strategyLabel(result.strategy))
+                    Text(result.isDetected ? "Claude Code detected" : "Claude Code not detected")
                         .font(.caption)
                         .fontWeight(.medium)
-                        .foregroundStyle(result.isDetected ? .green : .orange)
+                        .foregroundStyle(result.isDetected ? Color.usageGreen : Color.usageOrange)
                 }
 
-                Text(result.message)
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-                    .fixedSize(horizontal: false, vertical: true)
+                if !result.isDetected {
+                    Text("Install Claude Code, then run `claude` in terminal.")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
 
-            Divider()
-
-            // Login status
+            // Auth status
             HStack(spacing: 6) {
                 Image(systemName: ccProvider?.isLoggedIn == true ? "checkmark.circle.fill" : "xmark.circle")
-                    .foregroundStyle(ccProvider?.isLoggedIn == true ? .green : .orange)
+                    .foregroundStyle(ccProvider?.isLoggedIn == true ? Color.usageGreen : Color.usageOrange)
                     .font(.caption)
-                Text(ccProvider?.isLoggedIn == true ? "Logged in via OAuth" : "Not logged in")
+                Text(ccProvider?.isLoggedIn == true ? "Authenticated" : "Not authenticated")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
             // Account info
-            if let account = ccProvider?.accountInfo {
+            if let email = ccProvider?.accountEmail {
                 HStack(spacing: 6) {
                     Image(systemName: "person.circle")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    if let email = account.emailAddress {
-                        Text(email)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    if let org = account.organizationName {
-                        Text("(\(org))")
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                    }
+                    Text(email)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
 
             // Subscription
-            if let sub = ccProvider?.subscriptionType {
+            if let plan = ccProvider?.planDisplayName {
                 HStack(spacing: 6) {
                     Image(systemName: "star.circle")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text("\(sub.capitalized) plan")
+                        .foregroundStyle(Color.claudeAccent)
+                    Text("\(plan) plan")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
             }
 
-            // Data source info
-            if let result = ccProvider?.detectionResult {
-                HStack(spacing: 6) {
-                    Image(systemName: "folder")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text(result.configDir?.path ?? "Not found")
-                        .font(.system(.caption2, design: .monospaced))
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
+            // Onboarding: manual token entry if not authenticated
+            if ccProvider?.isLoggedIn != true {
+                Divider()
 
-                if let cli = result.cliPath {
-                    HStack(spacing: 6) {
-                        Image(systemName: "terminal")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Text(cli)
-                            .font(.system(.caption2, design: .monospaced))
-                            .foregroundStyle(.tertiary)
-                    }
-                }
-
-                // Fallback indicator
-                if !result.hasSessions && result.hasOAuthCredentials {
-                    HStack(spacing: 4) {
-                        Image(systemName: "arrow.triangle.2.circlepath")
-                            .font(.caption2)
-                            .foregroundStyle(.orange)
-                        Text("Using API fallback (no local session files)")
-                            .font(.caption2)
-                            .foregroundStyle(.orange)
-                    }
-                    .padding(.top, 2)
-                }
-            }
-
-            Divider()
-
-            // Custom path override
-            DisclosureGroup("Custom data path", isExpanded: $showCustomPath) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Override the auto-detected path if Claude Code data is in a non-standard location.")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-
-                    HStack(spacing: 6) {
-                        TextField("~/.claude", text: $customPath)
-                            .textFieldStyle(.roundedBorder)
-                            .font(.system(.caption, design: .monospaced))
-
-                        Button("Apply") {
-                            ccProvider?.setCustomPath(customPath)
-                            appState.providerManager.objectWillChange.send()
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                        .disabled(customPath.isEmpty)
-
-                        Button("Reset") {
-                            customPath = ""
-                            ccProvider?.setCustomPath("")
-                            appState.providerManager.objectWillChange.send()
-                        }
-                        .buttonStyle(.plain)
+                    Text("To authenticate, either:")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    }
 
-                    if let envVar = ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"] {
-                        Text("CLAUDE_CONFIG_DIR: \(envVar)")
-                            .font(.system(.caption2, design: .monospaced))
-                            .foregroundStyle(.tertiary)
-                    }
-                }
-                .padding(.top, 4)
-            }
-            .font(.caption)
-            .foregroundStyle(.secondary)
-        }
-        .onAppear {
-            customPath = ccProvider?.detector.customConfigPath ?? ""
-        }
-    }
-
-    private func strategyLabel(_ strategy: ClaudeCodeDetector.Strategy) -> String {
-        switch strategy {
-        case .defaultPath: return "Detected at ~/.claude"
-        case .envVariable: return "Detected via CLAUDE_CONFIG_DIR"
-        case .customPath: return "Using custom path"
-        case .cliBinary: return "CLI found, awaiting sessions"
-        case .keychainOnly: return "Keychain only (API fallback)"
-        case .none: return "Not detected"
-        }
-    }
-
-    // MARK: - Cursor Status View
-
-    @ViewBuilder
-    private var cursorStatusView: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            // Installation status
-            HStack(spacing: 6) {
-                Image(systemName: CursorAuthReader.isInstalled ? "checkmark.circle.fill" : "xmark.circle")
-                    .foregroundStyle(CursorAuthReader.isInstalled ? .green : .orange)
-                    .font(.caption)
-                Text(CursorAuthReader.isInstalled ? "Cursor installed" : "Cursor not found")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            // Auth status
-            if CursorAuthReader.accessToken != nil {
-                HStack(spacing: 6) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
-                        .font(.caption)
-                    Text("Logged in")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                if let userId = CursorAuthReader.userId {
-                    HStack(spacing: 6) {
-                        Image(systemName: "person.circle")
+                    HStack(spacing: 4) {
+                        Text("A.")
+                            .font(.caption)
+                            .fontWeight(.bold)
+                            .foregroundStyle(.secondary)
+                        Text("Run `claude` in your terminal to log in")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        Text(userId)
-                            .font(.system(.caption2, design: .monospaced))
-                            .foregroundStyle(.tertiary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
                     }
-                }
-            } else if CursorAuthReader.isInstalled {
-                HStack(spacing: 6) {
-                    Image(systemName: "exclamationmark.triangle")
-                        .foregroundStyle(.orange)
-                        .font(.caption)
-                    Text("Not logged in — open Cursor and sign in")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                }
-            }
 
-            // Data source
-            HStack(spacing: 6) {
-                Image(systemName: "folder")
+                    HStack(spacing: 4) {
+                        Text("B.")
+                            .font(.caption)
+                            .fontWeight(.bold)
+                            .foregroundStyle(.secondary)
+                        Text("Paste token from: `security find-generic-password -s 'Claude Code-credentials' -w`")
+                            .font(.system(.caption2, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+
+                    DisclosureGroup("Paste token", isExpanded: $showTokenInput) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            SecureField("Paste token here...", text: $tokenInput)
+                                .textFieldStyle(.roundedBorder)
+                                .font(.system(.caption, design: .monospaced))
+
+                            Button("Save Token") {
+                                ccProvider?.setManualToken(tokenInput)
+                                tokenInput = ""
+                                let providerId = provider.id
+                                Task { @MainActor in
+                                    await appState.providerManager.refreshProviderLocalState(for: providerId)
+                                    if let refreshedProvider = appState.providerManager.providers.first(where: { $0.id == providerId }),
+                                       refreshedProvider.isEnabled {
+                                        await appState.providerManager.fetchQuota(for: refreshedProvider)
+                                    }
+                                    appState.ensureMenuBarProviderSelection()
+                                    appState.emitMenuBarPresentationIfNeeded()
+                                }
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .disabled(tokenInput.isEmpty)
+                        }
+                        .padding(.top, 4)
+                    }
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Text(CursorAuthReader.dataDir.path)
-                    .font(.system(.caption2, design: .monospaced))
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+                }
             }
         }
     }
 
-    // MARK: - Codex Status View
+    // MARK: - Codex Status
 
     @ViewBuilder
     private var codexStatusView: some View {
-        let codexDir = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".codex")
-        let isInstalled = FileManager.default.fileExists(atPath: codexDir.path)
+        let isInstalled = provider.isConfigured
 
         VStack(alignment: .leading, spacing: 6) {
+            // Installation status
             HStack(spacing: 6) {
                 Image(systemName: isInstalled ? "checkmark.circle.fill" : "xmark.circle")
-                    .foregroundStyle(isInstalled ? .green : .orange)
+                    .foregroundStyle(isInstalled ? Color.usageGreen : Color.usageOrange)
                     .font(.caption)
                 Text(isInstalled ? "Codex CLI installed" : "Codex CLI not found")
                     .font(.caption)
@@ -361,209 +249,15 @@ struct ProviderSettingCard: View {
             }
 
             if isInstalled {
-                HStack(spacing: 6) {
-                    Image(systemName: "folder")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text("~/.codex/")
-                        .font(.system(.caption, design: .monospaced))
-                        .foregroundStyle(.tertiary)
-                }
-
-                // Check history file
-                let historyPath = codexDir.appendingPathComponent("history.jsonl")
-                let hasHistory = FileManager.default.fileExists(atPath: historyPath.path)
-
-                HStack(spacing: 6) {
-                    Image(systemName: hasHistory ? "doc.text.fill" : "doc.text")
-                        .font(.caption)
-                        .foregroundStyle(hasHistory ? .green : .orange)
-                    Text(hasHistory ? "Session history available" : "No history.jsonl yet")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                if let config = CodexConfig.read(), let model = config.model {
-                    HStack(spacing: 6) {
-                        Image(systemName: "cpu")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Text("Default model: \(model)")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
-                    }
-                }
-            }
-        }
-    }
-
-    // MARK: - Copilot Config View
-
-    @State private var copilotOrg: String = ""
-    @State private var copilotUsername: String = ""
-
-    @ViewBuilder
-    private var copilotConfigView: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Configure at least one: organization name (for team metrics) or GitHub username (for individual billing).")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-
-            HStack(spacing: 6) {
-                Text("Org:")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 60, alignment: .trailing)
-                TextField("my-org", text: $copilotOrg)
-                    .textFieldStyle(.roundedBorder)
+                Text("Codex uses its own authentication — no extra setup needed.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            } else {
+                Text("Install Codex CLI: npm i -g @openai/codex")
                     .font(.system(.caption, design: .monospaced))
-            }
-
-            HStack(spacing: 6) {
-                Text("Username:")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 60, alignment: .trailing)
-                TextField("octocat", text: $copilotUsername)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(.caption, design: .monospaced))
-            }
-
-            Button("Save Config") {
-                if let copilot = provider as? CopilotProvider {
-                    copilot.organizationName = copilotOrg
-                    copilot.username = copilotUsername
-                    appState.providerManager.objectWillChange.send()
-                }
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .disabled(copilotOrg.isEmpty && copilotUsername.isEmpty)
-        }
-        .onAppear {
-            if let copilot = provider as? CopilotProvider {
-                copilotOrg = copilot.organizationName
-                copilotUsername = copilot.username
+                    .foregroundStyle(.tertiary)
             }
         }
     }
 
-    // MARK: - Windsurf Status View
-
-    @ViewBuilder
-    private var windsurfStatusView: some View {
-        let isInstalled = WindsurfProvider.isInstalled
-
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Image(systemName: isInstalled ? "checkmark.circle.fill" : "xmark.circle")
-                    .foregroundStyle(isInstalled ? .green : .orange)
-                    .font(.caption)
-                Text(isInstalled ? "Windsurf installed" : "Windsurf not found")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            if isInstalled {
-                HStack(spacing: 6) {
-                    Image(systemName: "folder")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text("~/.codeium/windsurf/")
-                        .font(.system(.caption, design: .monospaced))
-                        .foregroundStyle(.tertiary)
-                }
-
-                HStack(spacing: 4) {
-                    Image(systemName: "info.circle")
-                        .font(.caption2)
-                        .foregroundStyle(.blue)
-                    Text("Enterprise service key required for detailed analytics")
-                        .font(.caption2)
-                        .foregroundStyle(.blue)
-                }
-            }
-        }
-    }
-
-    // MARK: - API Key Input View
-
-    @ViewBuilder
-    private var apiKeyInputView: some View {
-        HStack(spacing: 8) {
-            Group {
-                if isShowingKey {
-                    TextField(provider.apiKeyPlaceholder, text: $apiKeyInput)
-                } else {
-                    SecureField(provider.apiKeyPlaceholder, text: $apiKeyInput)
-                }
-            }
-            .textFieldStyle(.roundedBorder)
-            .font(.system(.caption, design: .monospaced))
-
-            Button {
-                isShowingKey.toggle()
-            } label: {
-                Image(systemName: isShowingKey ? "eye.slash" : "eye")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.plain)
-            .help(isShowingKey ? "Hide API key" : "Show API key")
-        }
-
-        HStack {
-            Button("Save") {
-                appState.providerManager.setAPIKey(apiKeyInput, for: provider.id)
-                validationResult = nil
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.small)
-            .disabled(apiKeyInput.isEmpty)
-
-            Button("Test") {
-                Task { await validateKey() }
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .disabled(apiKeyInput.isEmpty || isValidating)
-
-            if isValidating {
-                ProgressView()
-                    .controlSize(.mini)
-            }
-
-            Spacer()
-
-            if let result = validationResult {
-                switch result {
-                case .success:
-                    Label("Valid", systemImage: "checkmark.circle.fill")
-                        .font(.caption)
-                        .foregroundStyle(.green)
-                case .failure(let message):
-                    Label(message, systemImage: "xmark.circle.fill")
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                        .lineLimit(1)
-                }
-            }
-        }
-    }
-
-    private func validateKey() async {
-        isValidating = true
-        validationResult = nil
-
-        appState.providerManager.setAPIKey(apiKeyInput, for: provider.id)
-
-        do {
-            let isValid = try await provider.validate()
-            validationResult = isValid ? .success : .failure("Invalid key")
-        } catch {
-            validationResult = .failure(error.localizedDescription)
-        }
-
-        isValidating = false
-    }
 }

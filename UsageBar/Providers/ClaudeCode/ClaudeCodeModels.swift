@@ -1,110 +1,66 @@
 import Foundation
 
-// MARK: - Session JSONL Message Types
+// MARK: - Claude Usage API Response
 
-/// A single line from a Claude Code session JSONL file
-struct SessionMessage: Decodable {
-    let type: String                    // "user", "assistant", "system", etc.
-    let message: AssistantMessage?      // Present for "assistant" type
-    let sessionId: String?
-    let timestamp: String?
-    let model: String?
-    let cwd: String?
-    let version: String?
-    let gitBranch: String?
-    let uuid: String?
-    let parentUuid: String?
-    let requestId: String?
-    let costUSD: Double?
+/// Response from GET https://api.anthropic.com/api/oauth/usage
+///
+/// NOTE: No explicit CodingKeys here — NetworkClient uses
+/// `keyDecodingStrategy = .convertFromSnakeCase` which automatically
+/// maps `five_hour` → `fiveHour`, `resets_at` → `resetsAt`, etc.
+/// Adding manual CodingKeys would double-convert and break decoding.
+struct ClaudeUsageResponse: Decodable {
+    let fiveHour: UsageWindow?
+    let sevenDay: UsageWindow?
+    let sevenDayOpus: UsageWindow?
 
-    struct AssistantMessage: Decodable {
-        let usage: TokenUsage?
-        let model: String?
-        let role: String?
+    struct UsageWindow: Decodable {
+        let utilization: Double?        // 0.0 - 100.0
+        let resetsAt: Date?             // ISO8601 date (decoded by .iso8601 strategy)
     }
 
-    struct TokenUsage: Decodable {
-        let inputTokens: Int?
-        let outputTokens: Int?
-        let cacheCreationInputTokens: Int?
-        let cacheReadInputTokens: Int?
-        let cacheCreation: CacheCreation?
-        let serviceTier: String?
+    /// Convert to QuotaData
+    func toQuotaData(provider: String, planName: String?, email: String?) -> QuotaData {
+        var windows: [QuotaWindow] = []
 
-        struct CacheCreation: Decodable {
-            let ephemeral5mInputTokens: Int?
-            let ephemeral1hInputTokens: Int?
-
-            var totalTokens: Int {
-                (ephemeral5mInputTokens ?? 0) + (ephemeral1hInputTokens ?? 0)
-            }
-
-            enum CodingKeys: String, CodingKey {
-                case ephemeral5mInputTokens = "ephemeral_5m_input_tokens"
-                case ephemeral1hInputTokens = "ephemeral_1h_input_tokens"
-            }
+        if let fh = fiveHour {
+            windows.append(QuotaWindow(
+                id: "session",
+                displayName: "Session (5h)",
+                usagePercent: fh.utilization ?? 0,
+                resetsAt: fh.resetsAt,
+                windowDurationMinutes: 300
+            ))
         }
 
-        enum CodingKeys: String, CodingKey {
-            case inputTokens = "input_tokens"
-            case outputTokens = "output_tokens"
-            case cacheCreationInputTokens = "cache_creation_input_tokens"
-            case cacheReadInputTokens = "cache_read_input_tokens"
-            case cacheCreation = "cache_creation"
-            case serviceTier = "service_tier"
+        if let sd = sevenDay {
+            windows.append(QuotaWindow(
+                id: "weekly",
+                displayName: "Weekly",
+                usagePercent: sd.utilization ?? 0,
+                resetsAt: sd.resetsAt,
+                windowDurationMinutes: 10080
+            ))
         }
-    }
 
-    enum CodingKeys: String, CodingKey {
-        case type, message, sessionId, timestamp, model, cwd
-        case version, gitBranch, uuid, parentUuid, requestId, costUSD
-    }
-}
+        if let opus = sevenDayOpus {
+            windows.append(QuotaWindow(
+                id: "sonnet",
+                displayName: "Sonnet Limit",
+                usagePercent: opus.utilization ?? 0,
+                resetsAt: opus.resetsAt,
+                windowDurationMinutes: 10080
+            ))
+        }
 
-// MARK: - Stats Cache (stats-cache.json)
-
-/// Claude Code's local stats cache at ~/.claude/stats-cache.json
-struct StatsCache: Decodable {
-    let version: Int?
-    let dailyActivity: [DailyActivityEntry]?
-    let dailyModelTokens: [DailyModelTokenEntry]?
-    let modelUsage: [String: ModelUsageEntry]?
-    let totalSessions: Int?
-    let totalMessages: Int?
-    let longestSession: LongestSession?
-    let firstSessionDate: String?
-    let hourCounts: [String: Int]?
-    let lastComputedDate: String?
-    let totalSpeculationTimeSavedMs: Int?
-
-    struct DailyActivityEntry: Decodable {
-        let date: String
-        let messageCount: Int?
-        let sessionCount: Int?
-        let toolCallCount: Int?
-    }
-
-    struct DailyModelTokenEntry: Decodable {
-        let date: String
-        let tokensByModel: [String: Int]?
-    }
-
-    struct ModelUsageEntry: Decodable {
-        let inputTokens: Int?
-        let outputTokens: Int?
-        let cacheReadInputTokens: Int?
-        let cacheCreationInputTokens: Int?
-        let webSearchRequests: Int?
-        let costUSD: Double?
-        let contextWindow: Int?
-        let maxOutputTokens: Int?
-    }
-
-    struct LongestSession: Decodable {
-        let sessionId: String?
-        let duration: Int?
-        let messageCount: Int?
-        let timestamp: String?
+        return QuotaData(
+            id: "claude-code",
+            provider: provider,
+            planName: planName,
+            windows: windows,
+            accountEmail: email,
+            fetchedAt: Date(),
+            isStale: false
+        )
     }
 }
 
@@ -135,6 +91,12 @@ struct ClaudeOAuthCredentials: Decodable {
     let claudeAiOauth: OAuthData?
     let primaryApiKey: String?
 
+    /// Explicit initializer (used when constructing from direct OAuthData decode)
+    init(claudeAiOauth: OAuthData?, primaryApiKey: String?) {
+        self.claudeAiOauth = claudeAiOauth
+        self.primaryApiKey = primaryApiKey
+    }
+
     struct OAuthData: Decodable {
         let accessToken: String?
         let refreshToken: String?
@@ -150,40 +112,13 @@ struct ClaudeOAuthCredentials: Decodable {
     }
 }
 
-// MARK: - Parsed Session Summary
+// MARK: - Credentials File
 
-/// A parsed and summarized Claude Code session
-struct ClaudeCodeSession: Identifiable {
-    let id: String              // session UUID (filename)
-    let projectPath: String
-    let startTime: Date?
-    let endTime: Date?
-    let messageCount: Int
-    let model: String?
-    let gitBranch: String?
-    let totalInputTokens: Int
-    let totalOutputTokens: Int
-    let totalCacheReadTokens: Int
-    let totalCacheCreationTokens: Int
-    let costUSD: Double
-    let models: Set<String>
+/// Structure of ~/.claude/.credentials.json
+struct ClaudeCredentialsFile: Decodable {
+    let claudeAiOauth: ClaudeOAuthCredentials.OAuthData?
 
-    var totalTokens: Int {
-        totalInputTokens + totalOutputTokens + totalCacheReadTokens + totalCacheCreationTokens
-    }
-
-    var duration: TimeInterval? {
-        guard let start = startTime, let end = endTime else { return nil }
-        return end.timeIntervalSince(start)
-    }
-
-    var durationFormatted: String {
-        guard let duration = duration else { return "—" }
-        let hours = Int(duration) / 3600
-        let minutes = (Int(duration) % 3600) / 60
-        if hours > 0 {
-            return "\(hours)h \(minutes)m"
-        }
-        return "\(minutes)m"
+    enum CodingKeys: String, CodingKey {
+        case claudeAiOauth = "claude_ai_oauth"
     }
 }
