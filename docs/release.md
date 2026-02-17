@@ -6,12 +6,6 @@ This runbook describes how maintainers publish DMG releases and npm installer up
 
 - `NPM_TOKEN`
 
-For site deployment workflow:
-
-- `VERCEL_TOKEN`
-- `VERCEL_ORG_ID`
-- `VERCEL_PROJECT_ID`
-
 ## Release Steps
 
 1. Ensure your target branch is green in CI.
@@ -31,6 +25,11 @@ git push origin v1.1.0
 4. Validate on a clean macOS machine:
 - `npx @qdock/installer`
 - manual DMG installation
+
+## Website Deployment
+
+Website deployment is handled in a separate repository.
+This repository no longer runs a site deployment workflow.
 
 ## Important Notes (Current Setup)
 

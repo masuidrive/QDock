@@ -53,7 +53,8 @@ swift run QDock
 
 ## Website
 
-This repo includes a single-page landing site in `site/`, designed for Vercel deployment.
+The marketing website has been moved to a separate repository.
+For migration/publish commands, see `docs/site-migration.md`.
 
 ## Documentation
 
