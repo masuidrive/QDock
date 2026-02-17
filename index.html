@@ -11,7 +11,7 @@
     <meta property="og:title" content="QDock" />
     <meta
       property="og:description"
-      content="Install QDock in one command with npx, or download the notarized DMG."
+      content="Install QDock in one command with npx, or download the latest DMG."
     />
     <meta property="og:type" content="website" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -63,7 +63,7 @@
             </div>
             <p>Installs the latest stable release to your Mac.</p>
             <div class="code-wrap">
-              <code id="npx-command">npx @altansaid/qdock-installer</code>
+              <code id="npx-command">npx @qdock/installer</code>
               <button class="copy-btn" data-copy-target="npx-command">Copy</button>
             </div>
             <ul class="meta">
@@ -100,6 +100,21 @@
             </div>
           </article>
         </div>
+
+        <aside class="first-launch-note" aria-label="First launch guidance for DMG installs">
+          <h3>First Launch on macOS</h3>
+          <p>
+            If you install with DMG, macOS may block QDock on first launch. Open Terminal and run:
+          </p>
+          <div class="code-wrap first-launch-code">
+            <code id="first-launch-command">xattr -cr /Applications/QDock.app</code>
+            <button class="copy-btn" data-copy-target="first-launch-command">Copy</button>
+          </div>
+          <p class="first-launch-help">
+            Then right-click <code>QDock.app</code> and choose <strong>Open</strong> once.
+            If you installed to <code>~/Applications</code>, update the command path accordingly.
+          </p>
+        </aside>
       </section>
 
       <section id="how" class="how reveal">
@@ -137,6 +152,15 @@
           <p>
             Use the DMG download button above, or check GitHub Releases directly for the latest
             artifact.
+          </p>
+        </details>
+        <details>
+          <summary>macOS blocked QDock on first launch. What should I do?</summary>
+          <p>
+            This can happen after manual DMG install. Run
+            <code>xattr -cr /Applications/QDock.app</code> in Terminal, then right-click
+            <code>QDock.app</code> and choose <strong>Open</strong> once. If installed under
+            <code>~/Applications</code>, update the path in the command.
           </p>
         </details>
         <details>
