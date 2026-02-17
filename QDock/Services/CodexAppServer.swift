@@ -12,7 +12,7 @@ final class CodexAppServer {
 
     /// Fetch rate limits from codex app-server
     /// Launches the process, performs JSON-RPC handshake, queries rate limits, then terminates
-    func fetchRateLimits() async throws -> RateLimitsResult {
+    func fetchRateLimits(apiKey: String? = nil) async throws -> RateLimitsResult {
         // Find codex binary
         guard let codexPath = findCodexBinary() else {
             throw ProviderError.notInstalled
@@ -31,6 +31,9 @@ final class CodexAppServer {
         // Set environment — ensure node is in PATH for NVM installations
         var env = ProcessInfo.processInfo.environment
         env["TERM"] = "dumb"
+        if let apiKey, !apiKey.isEmpty {
+            env["OPENAI_API_KEY"] = apiKey
+        }
         // Add the codex binary's directory to PATH so node can be found
         let codexDir = (codexPath as NSString).deletingLastPathComponent
         if let existingPath = env["PATH"] {

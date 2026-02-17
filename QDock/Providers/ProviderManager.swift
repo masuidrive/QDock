@@ -95,6 +95,7 @@ final class ProviderManager {
         for provider in providers {
             await provider.refreshLocalState()
         }
+        pruneInactiveProviderState()
         providersRevision &+= 1
         notifyStateChanged()
     }
@@ -102,6 +103,7 @@ final class ProviderManager {
     func refreshProviderLocalState(for providerId: String) async {
         guard let provider = providers.first(where: { $0.id == providerId }) else { return }
         await provider.refreshLocalState()
+        pruneInactiveProviderState()
         providersRevision &+= 1
         notifyStateChanged()
     }
@@ -152,6 +154,9 @@ final class ProviderManager {
             setErrorIfNeeded("Request cancelled", for: id)
         } catch {
             setErrorIfNeeded(error.localizedDescription, for: id)
+            if shouldClearQuota(for: error) {
+                quotaByProvider.removeValue(forKey: id)
+            }
         }
 
         loadingProviders.remove(id)
@@ -181,6 +186,27 @@ final class ProviderManager {
     private func setErrorIfNeeded(_ message: String, for providerId: String) {
         guard errorsByProvider[providerId] != message else { return }
         errorsByProvider[providerId] = message
+    }
+
+    private func shouldClearQuota(for error: Error) -> Bool {
+        guard let providerError = error as? ProviderError else { return false }
+        switch providerError {
+        case .notConfigured, .notInstalled, .authRequired, .tokenExpired:
+            return true
+        case .rateLimited, .networkError, .apiError, .parseError:
+            return false
+        }
+    }
+
+    private func pruneInactiveProviderState() {
+        let activeProviderIDs = Set(
+            providers
+                .filter { $0.isEnabled && $0.isConfigured }
+                .map(\.id)
+        )
+
+        quotaByProvider = quotaByProvider.filter { activeProviderIDs.contains($0.key) }
+        errorsByProvider = errorsByProvider.filter { activeProviderIDs.contains($0.key) }
     }
 
     private func shouldStoreQuota(_ newQuota: QuotaData, for providerId: String) -> Bool {

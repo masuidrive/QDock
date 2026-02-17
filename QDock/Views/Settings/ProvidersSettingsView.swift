@@ -24,7 +24,16 @@ struct ProviderSettingCard: View {
     let provider: any QuotaProvider
     let appState: AppState
 
+    @State private var codexTokenInput: String = ""
+    @State private var showCodexTokenInput: Bool = false
+
+    private var providerErrorMessage: String? {
+        appState.providerManager.errorsByProvider[provider.id]
+    }
+
     var body: some View {
+        let status = provider.authStatus
+
         VStack(alignment: .leading, spacing: 10) {
             // Provider header
             HStack {
@@ -36,7 +45,7 @@ struct ProviderSettingCard: View {
                     .font(.callout)
                     .fontWeight(.medium)
 
-                authStatusBadge
+                authStatusBadge(status: status)
 
                 Spacer()
 
@@ -51,9 +60,9 @@ struct ProviderSettingCard: View {
             // Provider-specific status view
             switch provider.id {
             case "claude-code":
-                claudeCodeStatusView
+                claudeCodeStatusView(status: status)
             case "codex":
-                codexStatusView
+                codexStatusView(status: status)
             default:
                 EmptyView()
             }
@@ -75,9 +84,7 @@ struct ProviderSettingCard: View {
     // MARK: - Auth Status Badge
 
     @ViewBuilder
-    private var authStatusBadge: some View {
-        let status = provider.authStatus
-
+    private func authStatusBadge(status: AuthStatus) -> some View {
         switch status {
         case .authenticated:
             Text("AUTH")
@@ -108,16 +115,12 @@ struct ProviderSettingCard: View {
 
     // MARK: - Claude Code Status
 
-    @State private var tokenInput: String = ""
-    @State private var showTokenInput: Bool = false
-
     @ViewBuilder
-    private var claudeCodeStatusView: some View {
-        let ccProvider = provider as? ClaudeCodeProvider
+    private func claudeCodeStatusView(status: AuthStatus) -> some View {
+        let claudeProvider = provider as? ClaudeCodeProvider
 
         VStack(alignment: .leading, spacing: 8) {
-            // Detection status
-            if let result = ccProvider?.detectionResult {
+            if let result = claudeProvider?.detectionResult {
                 HStack(spacing: 6) {
                     Image(systemName: result.isDetected ? "checkmark.circle.fill" : "exclamationmark.triangle")
                         .foregroundStyle(result.isDetected ? Color.usageGreen : Color.usageOrange)
@@ -136,18 +139,16 @@ struct ProviderSettingCard: View {
                 }
             }
 
-            // Auth status
             HStack(spacing: 6) {
-                Image(systemName: ccProvider?.isLoggedIn == true ? "checkmark.circle.fill" : "xmark.circle")
-                    .foregroundStyle(ccProvider?.isLoggedIn == true ? Color.usageGreen : Color.usageOrange)
+                Image(systemName: status.isAuthenticated ? "checkmark.circle.fill" : "xmark.circle")
+                    .foregroundStyle(status.isAuthenticated ? Color.usageGreen : Color.usageOrange)
                     .font(.caption)
-                Text(ccProvider?.isLoggedIn == true ? "Authenticated" : "Not authenticated")
+                Text(status.isAuthenticated ? "Authenticated" : "Not authenticated")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
-            // Account info
-            if let email = ccProvider?.accountEmail {
+            if let email = claudeProvider?.accountEmail {
                 HStack(spacing: 6) {
                     Image(systemName: "person.circle")
                         .font(.caption)
@@ -158,8 +159,7 @@ struct ProviderSettingCard: View {
                 }
             }
 
-            // Subscription
-            if let plan = ccProvider?.planDisplayName {
+            if let plan = claudeProvider?.planDisplayName {
                 HStack(spacing: 6) {
                     Image(systemName: "star.circle")
                         .font(.caption)
@@ -170,65 +170,37 @@ struct ProviderSettingCard: View {
                 }
             }
 
-            // Onboarding: manual token entry if not authenticated
-            if ccProvider?.isLoggedIn != true {
-                Divider()
+            if shouldShowClaudeAuthHelp(status: status) {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "info.circle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                        Text("How to fix authentication")
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                    }
 
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("To authenticate, either:")
-                        .font(.caption)
+                    Text(claudeAuthHelpMessage(status: status))
+                        .font(.caption2)
                         .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
 
-                    HStack(spacing: 4) {
-                        Text("A.")
-                            .font(.caption)
-                            .fontWeight(.bold)
-                            .foregroundStyle(.secondary)
-                        Text("Run `claude` in your terminal to log in")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                    Button("Refresh") {
+                        refreshAllProviders()
                     }
-
-                    HStack(spacing: 4) {
-                        Text("B.")
-                            .font(.caption)
-                            .fontWeight(.bold)
-                            .foregroundStyle(.secondary)
-                        Text("Paste token from: `security find-generic-password -s 'Claude Code-credentials' -w`")
-                            .font(.system(.caption2, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2)
-                    }
-
-                    DisclosureGroup("Paste token", isExpanded: $showTokenInput) {
-                        VStack(alignment: .leading, spacing: 6) {
-                            SecureField("Paste token here...", text: $tokenInput)
-                                .textFieldStyle(.roundedBorder)
-                                .font(.system(.caption, design: .monospaced))
-
-                            Button("Save Token") {
-                                ccProvider?.setManualToken(tokenInput)
-                                tokenInput = ""
-                                let providerId = provider.id
-                                Task { @MainActor in
-                                    await appState.providerManager.refreshProviderLocalState(for: providerId)
-                                    if let refreshedProvider = appState.providerManager.providers.first(where: { $0.id == providerId }),
-                                       refreshedProvider.isEnabled {
-                                        await appState.providerManager.fetchQuota(for: refreshedProvider)
-                                    }
-                                    appState.ensureMenuBarProviderSelection()
-                                    appState.emitMenuBarPresentationIfNeeded()
-                                }
-                            }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                            .disabled(tokenInput.isEmpty)
-                        }
-                        .padding(.top, 4)
-                    }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
                 }
+                .padding(10)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(.orange.opacity(0.08))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(.orange.opacity(0.25), lineWidth: 0.5)
+                        )
+                )
             }
         }
     }
@@ -236,11 +208,12 @@ struct ProviderSettingCard: View {
     // MARK: - Codex Status
 
     @ViewBuilder
-    private var codexStatusView: some View {
-        let isInstalled = provider.isConfigured
+    private func codexStatusView(status: AuthStatus) -> some View {
+        let codexProvider = provider as? CodexProvider
+        let isInstalled = codexProvider?.isInstalled ?? provider.isConfigured
+        let hasManualToken = codexProvider?.hasManualToken ?? false
 
         VStack(alignment: .leading, spacing: 6) {
-            // Installation status
             HStack(spacing: 6) {
                 Image(systemName: isInstalled ? "checkmark.circle.fill" : "xmark.circle")
                     .foregroundStyle(isInstalled ? Color.usageGreen : Color.usageOrange)
@@ -251,15 +224,157 @@ struct ProviderSettingCard: View {
             }
 
             if isInstalled {
-                Text("Codex uses its own authentication — no extra setup needed.")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                HStack(spacing: 6) {
+                    Image(systemName: status.isAuthenticated ? "checkmark.circle.fill" : "xmark.circle")
+                        .foregroundStyle(status.isAuthenticated ? Color.usageGreen : Color.usageOrange)
+                        .font(.caption)
+                    Text(status.isAuthenticated ? "Authenticated" : "Not authenticated")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             } else {
                 Text("Install Codex: npm i -g @openai/codex")
                     .font(.system(.caption, design: .monospaced))
                     .foregroundStyle(.tertiary)
             }
+
+            if shouldShowCodexAuthHelp(status: status) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Run `codex login`, then click Refresh.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Button("Refresh") {
+                        refreshAllProviders()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                }
+                .padding(10)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(.orange.opacity(0.08))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(.orange.opacity(0.25), lineWidth: 0.5)
+                        )
+                )
+            }
+
+            if isInstalled && (!status.isAuthenticated || hasManualToken) {
+                Divider()
+                Text("Advanced: Paste token manually")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                DisclosureGroup("Paste token", isExpanded: $showCodexTokenInput) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        SecureField("Paste token here...", text: $codexTokenInput)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(.caption, design: .monospaced))
+
+                        HStack(spacing: 8) {
+                            Button("Save Token") {
+                                codexProvider?.setManualToken(codexTokenInput)
+                                codexTokenInput = ""
+                                retryProviderConnection()
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .disabled(codexTokenInput.isEmpty)
+
+                            if hasManualToken {
+                                Button("Clear Token") {
+                                    codexProvider?.setManualToken("")
+                                    retryProviderConnection()
+                                }
+                                .buttonStyle(.plain)
+                                .font(.caption)
+                            }
+                        }
+                    }
+                    .padding(.top, 4)
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
         }
     }
 
+    // MARK: - Helpers
+
+    private func shouldShowClaudeAuthHelp(status: AuthStatus) -> Bool {
+        switch status {
+        case .needsAuth:
+            return true
+        case .authenticated:
+            guard let error = providerErrorMessage else { return false }
+            return isCredentialError(error)
+        case .notInstalled:
+            return false
+        }
+    }
+
+    private func claudeAuthHelpMessage(status: AuthStatus) -> String {
+        switch status {
+        case .needsAuth:
+            return "Open Claude Code on your computer (run `claude`) and send a short test prompt. Then click Refresh."
+        case .authenticated:
+            return "Your Claude token may have expired overnight. Open Claude Code, send a short test prompt to refresh auth, then click Refresh."
+        case .notInstalled:
+            return ""
+        }
+    }
+
+    private func shouldShowCodexAuthHelp(status: AuthStatus) -> Bool {
+        switch status {
+        case .needsAuth:
+            return true
+        case .authenticated:
+            guard let error = providerErrorMessage else { return false }
+            return isCredentialError(error)
+        case .notInstalled:
+            return false
+        }
+    }
+
+    private func isCredentialError(_ message: String) -> Bool {
+        let lower = message.lowercased()
+        if lower.contains("401") || lower.contains("unauthorized") {
+            return true
+        }
+
+        let credentialKeywords = [
+            "token", "credential", "authenticate", "authentication", "auth",
+            "login", "not configured", "not authenticated", "no access token",
+        ]
+        let transientKeywords = [
+            "timeout", "timed out", "network", "rate limit",
+            "server", "decode", "parse", "connection", "temporarily",
+        ]
+
+        let hasCredentialSignal = credentialKeywords.contains(where: { lower.contains($0) })
+        let hasTransientSignal = transientKeywords.contains(where: { lower.contains($0) })
+        return hasCredentialSignal && !hasTransientSignal
+    }
+
+    private func retryProviderConnection() {
+        let providerId = provider.id
+        Task { @MainActor in
+            await appState.providerManager.refreshProviderLocalState(for: providerId)
+            if let refreshedProvider = appState.providerManager.providers.first(where: { $0.id == providerId }),
+               refreshedProvider.isEnabled {
+                await appState.providerManager.fetchQuota(for: refreshedProvider)
+            }
+            appState.ensureMenuBarProviderSelection()
+            appState.emitMenuBarPresentationIfNeeded()
+        }
+    }
+
+    private func refreshAllProviders() {
+        Task {
+            await appState.manualRefresh()
+        }
+    }
 }

@@ -15,6 +15,7 @@ final class CodexProvider: QuotaProvider {
     private let codexDir: URL
     private let appServer = CodexAppServer()
     private var cachedQuota: QuotaData?
+    private var manualToken: String?
     private var localState = CodexLocalState.empty
     private let localStateTTL: TimeInterval = 30
     private let stateLock = NSLock()
@@ -23,6 +24,11 @@ final class CodexProvider: QuotaProvider {
     init() {
         codexDir = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".codex")
+        if let saved = KeychainService.shared.get(key: "codex-token"), !saved.isEmpty {
+            withState {
+                manualToken = saved
+            }
+        }
         refreshLocalStateSync(force: true)
     }
 
@@ -30,15 +36,18 @@ final class CodexProvider: QuotaProvider {
 
     var isConfigured: Bool {
         refreshLocalStateSync()
-        return isInstalled
+        return withState { localState.isConfigured }
     }
 
     var authStatus: AuthStatus {
         refreshLocalStateSync()
-        guard isInstalled else {
+        let snapshot = withState { localState }
+        guard snapshot.isInstalled else {
             return .notInstalled(message: "Codex not detected. Install via npm: npm i -g @openai/codex")
         }
-        // Codex uses its own auth — no extra setup needed
+        guard snapshot.hasCredentials else {
+            return .needsAuth(message: "Run `codex` in your terminal to authenticate, or paste your token in Settings.")
+        }
         return .authenticated(email: nil)
     }
 
@@ -48,13 +57,19 @@ final class CodexProvider: QuotaProvider {
 
     func fetchQuota() async throws -> QuotaData {
         await refreshLocalState()
+        let snapshot = withState { localState }
 
-        guard isInstalled else {
+        guard snapshot.isInstalled else {
             throw ProviderError.notInstalled
+        }
+        guard snapshot.hasCredentials else {
+            throw ProviderError.authRequired(
+                "No Codex credentials found. Run `codex` in your terminal to authenticate."
+            )
         }
 
         do {
-            let rateLimits = try await appServer.fetchRateLimits()
+            let rateLimits = try await appServer.fetchRateLimits(apiKey: resolveManualToken())
             let quota = buildQuotaData(from: rateLimits)
             withState {
                 cachedQuota = quota
@@ -79,13 +94,17 @@ final class CodexProvider: QuotaProvider {
 
     func validate() async throws -> Bool {
         await refreshLocalState()
-        return isInstalled
+        return withState { localState.isConfigured }
     }
 
     // MARK: - Detection
 
     var isInstalled: Bool {
         withState { localState.isInstalled }
+    }
+
+    var hasManualToken: Bool {
+        withState { localState.hasManualToken }
     }
 
     /// Read Codex config
@@ -96,6 +115,22 @@ final class CodexProvider: QuotaProvider {
     var planDisplayName: String? {
         // Codex doesn't expose plan info easily; return nil
         nil
+    }
+
+    /// Set a manually-provided token (from Settings onboarding)
+    func setManualToken(_ token: String) {
+        if token.isEmpty {
+            withState {
+                manualToken = nil
+            }
+            KeychainService.shared.delete(key: "codex-token")
+        } else {
+            withState {
+                manualToken = token
+            }
+            try? KeychainService.shared.save(key: "codex-token", value: token)
+        }
+        refreshLocalStateSync(force: true)
     }
 
     // MARK: - Helpers
@@ -170,14 +205,31 @@ final class CodexProvider: QuotaProvider {
         }
 
         let hasCodexDir = FileManager.default.fileExists(atPath: codexDir.path)
+        let hasManualToken = resolveManualToken() != nil
         let binaryPath = appServer.findCodexBinaryPublic()
         withState {
             localState = CodexLocalState(
                 hasCodexDirectory: hasCodexDir,
+                hasManualToken: hasManualToken,
                 binaryPath: binaryPath,
                 updatedAt: Date()
             )
         }
+    }
+
+    private func resolveManualToken() -> String? {
+        if let manual = withState({ manualToken }), !manual.isEmpty {
+            return manual
+        }
+
+        if let saved = KeychainService.shared.get(key: "codex-token"), !saved.isEmpty {
+            withState {
+                manualToken = saved
+            }
+            return saved
+        }
+
+        return nil
     }
 
     private func withState<T>(_ block: () -> T) -> T {
@@ -189,16 +241,26 @@ final class CodexProvider: QuotaProvider {
 
 private struct CodexLocalState {
     let hasCodexDirectory: Bool
+    let hasManualToken: Bool
     let binaryPath: String?
     let updatedAt: Date
 
     var isInstalled: Bool {
-        hasCodexDirectory && binaryPath != nil
+        binaryPath != nil
+    }
+
+    var hasCredentials: Bool {
+        hasCodexDirectory || hasManualToken
+    }
+
+    var isConfigured: Bool {
+        isInstalled && hasCredentials
     }
 
     static var empty: CodexLocalState {
         CodexLocalState(
             hasCodexDirectory: false,
+            hasManualToken: false,
             binaryPath: nil,
             updatedAt: .distantPast
         )

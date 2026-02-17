@@ -193,6 +193,11 @@ final class ClaudeCodeProvider: QuotaProvider {
         refreshLock.lock()
         defer { refreshLock.unlock() }
 
+        if force {
+            // Ensure manual/periodic refresh sees newly issued credentials immediately.
+            ClaudeKeychainReader.clearCache()
+        }
+
         if !force, Date().timeIntervalSince(withState({ localState.updatedAt })) < localStateTTL {
             return
         }

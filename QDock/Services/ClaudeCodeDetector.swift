@@ -217,25 +217,37 @@ final class ClaudeCodeDetector {
     // MARK: - Helpers
 
     private func findCLIPath() -> String? {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
         let commonPaths = [
             "/usr/local/bin/claude",
             "/opt/homebrew/bin/claude",
             "/usr/bin/claude",
-            "\(FileManager.default.homeDirectoryForCurrentUser.path)/.local/bin/claude",
-            "\(FileManager.default.homeDirectoryForCurrentUser.path)/.npm-global/bin/claude",
+            "\(home)/.local/bin/claude",
+            "\(home)/.npm-global/bin/claude",
+            "\(home)/.cargo/bin/claude",
         ]
 
-        for path in commonPaths {
+        var candidatePaths = commonPaths
+
+        // Include NVM-managed Node bins for globally installed npm CLIs.
+        let nvmDir = "\(home)/.nvm/versions/node"
+        if let versions = try? FileManager.default.contentsOfDirectory(atPath: nvmDir) {
+            for version in versions {
+                candidatePaths.append("\(nvmDir)/\(version)/bin/claude")
+            }
+        }
+
+        for path in candidatePaths {
             if FileManager.default.isExecutableFile(atPath: path) {
                 return path
             }
         }
 
-        // Try `which claude` as last resort
+        // Try login shell PATH as last resort.
         let process = Process()
         let pipe = Pipe()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/which")
-        process.arguments = ["claude"]
+        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        process.arguments = ["-l", "-c", "which claude"]
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
 
