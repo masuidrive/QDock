@@ -1,5 +1,5 @@
 {
-  "name": "@qdock/installer",
+  "name": "@altansaid/qdock-installer",
   "version": "0.1.0",
   "description": "CLI installer for QDock on macOS",
   "license": "MIT",
