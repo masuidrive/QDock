@@ -1,4 +1,4 @@
-const GITHUB_REPO = "altansaid/macOs-app";
+const GITHUB_REPO = "altansaid/QDock";
 
 function setReleaseFallback() {
   const link = document.getElementById("download-link");
