@@ -272,19 +272,54 @@ struct DashboardView: View {
     // MARK: - Footer
 
     private var footerView: some View {
-        HStack {
-            Button("Quit QDock") {
-                NSApplication.shared.terminate(nil)
+        VStack(spacing: 8) {
+            if let version = appState.availableUpdateVersion,
+               let updateURL = appState.availableUpdateURL {
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.down.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                    Text("Update \(version) available")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Link("Install", destination: updateURL)
+                        .font(.caption)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color.orange.opacity(0.1))
+                )
             }
-            .buttonStyle(.plain)
-            .font(.caption)
-            .foregroundStyle(.secondary)
 
-            Spacer()
+            HStack {
+                Button("Quit QDock") {
+                    NSApplication.shared.terminate(nil)
+                }
+                .buttonStyle(.plain)
+                .font(.caption)
+                .foregroundStyle(.secondary)
 
-            Text("v1.0.0")
-                .font(.caption2)
-                .foregroundStyle(.quaternary)
+                Spacer()
+
+                if appState.isCheckingForUpdates {
+                    ProgressView()
+                        .controlSize(.mini)
+                } else {
+                    Button("Check updates") {
+                        Task { await appState.checkForUpdates(force: true) }
+                    }
+                    .buttonStyle(.plain)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                }
+
+                Text("v\(appState.currentAppVersion)")
+                    .font(.caption2)
+                    .foregroundStyle(.quaternary)
+            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)

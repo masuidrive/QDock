@@ -32,9 +32,14 @@ final class AppState {
     let providerManager: ProviderManager
     let refreshService: RefreshService
     let sessionWatcher: SessionFileWatcher
+    let appUpdateService: AppUpdateService
 
     var selectedProvider: (any QuotaProvider)?
     var showingSettings = false
+    var availableUpdateVersion: String?
+    var availableUpdateURL: URL?
+    var isCheckingForUpdates = false
+    var lastUpdateCheckError: String?
 
     // User preferences
     var refreshIntervalSeconds: Double {
@@ -84,12 +89,15 @@ final class AppState {
     private var lastDynamicRefreshInterval: TimeInterval?
     @ObservationIgnored
     private var lastMenuBarPresentation: MenuBarPresentation?
+    @ObservationIgnored
+    private var lastUpdateCheckDate: Date?
 
     init(userDefaults: UserDefaults = .standard) {
         self.userDefaults = userDefaults
         self.providerManager = ProviderManager()
         self.refreshService = RefreshService()
         self.sessionWatcher = SessionFileWatcher()
+        self.appUpdateService = AppUpdateService()
 
         self.refreshIntervalSeconds = userDefaults.object(forKey: Keys.refreshIntervalSeconds) as? Double ?? 120
         self.showPercentInMenuBar = userDefaults.object(forKey: Keys.showPercentInMenuBar) as? Bool ?? true
@@ -137,6 +145,7 @@ final class AppState {
         ensureMenuBarProviderSelection()
         updateDynamicRefreshInterval()
         emitMenuBarPresentationIfNeeded()
+        await checkForUpdates()
     }
 
     /// Manual refresh triggered by user
@@ -145,6 +154,7 @@ final class AppState {
         ensureMenuBarProviderSelection()
         updateDynamicRefreshInterval()
         emitMenuBarPresentationIfNeeded()
+        await checkForUpdates()
     }
 
     func toggleProvider(_ providerId: String) {
@@ -260,6 +270,68 @@ final class AppState {
         guard presentation != lastMenuBarPresentation else { return }
         lastMenuBarPresentation = presentation
         onMenuBarPresentationChanged?(presentation)
+    }
+
+    // MARK: - Updates
+
+    var currentAppVersion: String {
+        let rawVersion =
+            (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? "0.0.0"
+        return rawVersion.lowercased().hasPrefix("v") ? String(rawVersion.dropFirst()) : rawVersion
+    }
+
+    func checkForUpdates(force: Bool = false) async {
+        if isCheckingForUpdates { return }
+        if !force,
+           let lastCheck = lastUpdateCheckDate,
+           Date().timeIntervalSince(lastCheck) < 3600 {
+            return
+        }
+
+        isCheckingForUpdates = true
+        defer {
+            isCheckingForUpdates = false
+            lastUpdateCheckDate = Date()
+        }
+
+        do {
+            let latestRelease = try await appUpdateService.fetchLatestStableRelease()
+            lastUpdateCheckError = nil
+
+            if Self.isVersion(latestRelease.version, newerThan: currentAppVersion) {
+                availableUpdateVersion = latestRelease.version
+                availableUpdateURL = latestRelease.releaseURL
+            } else {
+                availableUpdateVersion = nil
+                availableUpdateURL = nil
+            }
+        } catch {
+            if force {
+                lastUpdateCheckError = error.localizedDescription
+            }
+        }
+    }
+
+    private static func isVersion(_ lhs: String, newerThan rhs: String) -> Bool {
+        let lhsParts = numericVersionParts(from: lhs)
+        let rhsParts = numericVersionParts(from: rhs)
+        let maxCount = max(lhsParts.count, rhsParts.count)
+
+        for index in 0..<maxCount {
+            let left = index < lhsParts.count ? lhsParts[index] : 0
+            let right = index < rhsParts.count ? rhsParts[index] : 0
+            if left != right {
+                return left > right
+            }
+        }
+        return false
+    }
+
+    private static func numericVersionParts(from version: String) -> [Int] {
+        let parts = version.split(whereSeparator: { !$0.isNumber })
+            .compactMap { Int($0) }
+        return parts.isEmpty ? [0] : parts
     }
 
 }

@@ -36,7 +36,7 @@ struct GeneralSettingsView: View {
                     .fontWeight(.medium)
 
                 VStack(alignment: .leading, spacing: 4) {
-                    aboutRow("Version", value: "1.0.0")
+                    aboutRow("Version", value: appState.currentAppVersion)
                     aboutRow("Platform", value: "macOS 14+")
                     aboutRow("Framework", value: "SwiftUI")
                 }
