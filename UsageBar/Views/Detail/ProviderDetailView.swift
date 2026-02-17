@@ -1,6 +1,7 @@
 import SwiftUI
 
 /// Detailed view for a single provider showing quota windows
+@MainActor
 struct ProviderDetailView: View {
     let appState: AppState
 

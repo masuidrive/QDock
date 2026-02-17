@@ -1,6 +1,7 @@
 import SwiftUI
 
 /// Main settings view with tab navigation
+@MainActor
 struct SettingsView: View {
     let appState: AppState
     @State private var selectedTab: SettingsTab = .providers

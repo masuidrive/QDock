@@ -1,6 +1,7 @@
 import SwiftUI
 
 /// Main dashboard view shown in the popover
+@MainActor
 struct DashboardView: View {
     let appState: AppState
     @State private var selectedProviderIndex: Int = 0

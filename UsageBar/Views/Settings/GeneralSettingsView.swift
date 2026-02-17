@@ -2,6 +2,7 @@ import SwiftUI
 import ServiceManagement
 
 /// General application settings
+@MainActor
 struct GeneralSettingsView: View {
     let appState: AppState
     @State private var launchAtLoginEnabled: Bool = false

@@ -1,6 +1,7 @@
 import SwiftUI
 
 /// Provider configuration settings
+@MainActor
 struct ProvidersSettingsView: View {
     let appState: AppState
 
@@ -18,6 +19,7 @@ struct ProvidersSettingsView: View {
 }
 
 /// Individual provider configuration card
+@MainActor
 struct ProviderSettingCard: View {
     let provider: any QuotaProvider
     let appState: AppState

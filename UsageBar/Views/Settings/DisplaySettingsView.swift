@@ -2,6 +2,7 @@ import SwiftUI
 import Observation
 
 /// Display preferences settings
+@MainActor
 struct DisplaySettingsView: View {
     @Bindable var appState: AppState
 
