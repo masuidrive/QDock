@@ -53,8 +53,8 @@ swift run QDock
 
 ## Website
 
-The marketing website has been moved to a separate repository.
-For migration/publish commands, see `docs/site-migration.md`.
+Official website: [qdock.saidaltan.com](https://qdock.saidaltan.com/)
+Website source repository: `https://github.com/altansaid/qdocksite`
 
 ## Documentation
 

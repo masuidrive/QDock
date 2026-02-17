@@ -17,10 +17,11 @@ Useful flags:
 
 ## Option 2: Download DMG
 
-1. Open [GitHub Releases](https://github.com/altansaid/QDock/releases/latest).
-2. Download `QDock-vX.Y.Z-mac-universal.dmg`.
-3. Drag `QDock.app` to `Applications`.
-4. Open QDock.
+1. Open [qdock.saidaltan.com](https://qdock.saidaltan.com/).
+2. If needed, go directly to [GitHub Releases](https://github.com/altansaid/QDock/releases/latest).
+3. Download `QDock-vX.Y.Z-mac-universal.dmg`.
+4. Drag `QDock.app` to `Applications`.
+5. Open QDock.
 
 ## Verify Release Integrity
 

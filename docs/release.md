@@ -28,7 +28,10 @@ git push origin v1.1.0
 
 ## Website Deployment
 
-Website deployment is handled in a separate repository.
+Website deployment is handled in:
+- site URL: `https://qdock.saidaltan.com/`
+- source repo: `https://github.com/altansaid/qdocksite`
+
 This repository no longer runs a site deployment workflow.
 
 ## Important Notes (Current Setup)

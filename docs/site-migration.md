@@ -2,6 +2,7 @@
 
 This app repository no longer contains the website source.
 The site history has been prepared in branch `site-split`.
+Current live website: `https://qdock.saidaltan.com/`
 
 ## Push Site to a New Repository
 
@@ -15,12 +16,12 @@ git push <site-repo-url> site-split:main
 Example:
 
 ```bash
-git push https://github.com/altansaid/qdock-site.git site-split:main
+git push https://github.com/altansaid/qdocksite.git site-split:main
 ```
 
 ## Optional Local Clone for Site-Only Work
 
 ```bash
-git clone <site-repo-url> qdock-site
-cd qdock-site
+git clone <site-repo-url> qdocksite
+cd qdocksite
 ```
