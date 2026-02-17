@@ -1,6 +1,6 @@
 # QDock
 
-A native macOS menu bar app that shows AI coding quota usage in real time (currently Claude Code and Codex CLI).
+A native macOS menu bar app that shows AI coding quota usage in real time (currently Claude Code and Codex).
 
 ![QDock demo](docs/media/qdock-demo.gif)
 
