@@ -273,8 +273,7 @@ struct DashboardView: View {
 
     private var footerView: some View {
         VStack(spacing: 8) {
-            if let version = appState.availableUpdateVersion,
-               let updateURL = appState.availableUpdateURL {
+            if let version = appState.availableUpdateVersion {
                 HStack(spacing: 6) {
                     Image(systemName: "arrow.down.circle.fill")
                         .font(.caption)
@@ -283,8 +282,22 @@ struct DashboardView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Spacer()
-                    Link("Install", destination: updateURL)
+
+                    if appState.isInstallingUpdate {
+                        ProgressView()
+                            .controlSize(.mini)
+                    } else {
+                        Button("Install") {
+                            Task { await appState.installAvailableUpdate() }
+                        }
+                        .buttonStyle(.plain)
                         .font(.caption)
+                    }
+
+                    if let updateURL = appState.availableUpdateURL {
+                        Link("Manual", destination: updateURL)
+                            .font(.caption2)
+                    }
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
@@ -292,6 +305,22 @@ struct DashboardView: View {
                     RoundedRectangle(cornerRadius: 8)
                         .fill(Color.orange.opacity(0.1))
                 )
+            }
+
+            if let installedVersion = appState.installedUpdateVersion {
+                Text("Update \(installedVersion) installed. Restart QDock to apply.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 2)
+            }
+
+            if let installError = appState.updateInstallError {
+                Text(installError)
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 2)
             }
 
             HStack {
@@ -316,7 +345,7 @@ struct DashboardView: View {
                     .foregroundStyle(.tertiary)
                 }
 
-                if appState.availableUpdateVersion == nil {
+                if appState.availableUpdateVersion == nil, appState.installedUpdateVersion == nil {
                     Text("Up to date")
                         .font(.caption2)
                         .foregroundStyle(.tertiary)

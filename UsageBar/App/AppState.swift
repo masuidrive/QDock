@@ -40,6 +40,9 @@ final class AppState {
     var availableUpdateURL: URL?
     var isCheckingForUpdates = false
     var lastUpdateCheckError: String?
+    var isInstallingUpdate = false
+    var updateInstallError: String?
+    var installedUpdateVersion: String?
 
     // User preferences
     var refreshIntervalSeconds: Double {
@@ -282,6 +285,7 @@ final class AppState {
     }
 
     func checkForUpdates(force: Bool = false) async {
+        if installedUpdateVersion != nil { return }
         if isCheckingForUpdates { return }
         if !force,
            let lastCheck = lastUpdateCheckDate,
@@ -310,6 +314,27 @@ final class AppState {
             if force {
                 lastUpdateCheckError = error.localizedDescription
             }
+        }
+    }
+
+    func installAvailableUpdate() async {
+        guard let version = availableUpdateVersion, !isInstallingUpdate else { return }
+
+        isInstallingUpdate = true
+        updateInstallError = nil
+        installedUpdateVersion = nil
+
+        defer {
+            isInstallingUpdate = false
+        }
+
+        do {
+            try await appUpdateService.installLatestReleaseWithNpx()
+            installedUpdateVersion = version
+            availableUpdateVersion = nil
+            availableUpdateURL = nil
+        } catch {
+            updateInstallError = error.localizedDescription
         }
     }
 
