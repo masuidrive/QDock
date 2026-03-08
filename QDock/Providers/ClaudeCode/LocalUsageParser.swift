@@ -46,7 +46,7 @@ final class LocalUsageParser {
         let cutoffStr = ISO8601DateFormatter().string(from: cutoff)
 
         for projectDir in projectDirs {
-            guard var isDir = try? projectDir.resourceValues(forKeys: [.isDirectoryKey]).isDirectory,
+            guard let isDir = try? projectDir.resourceValues(forKeys: [.isDirectoryKey]).isDirectory,
                   isDir else { continue }
 
             guard let files = try? fm.contentsOfDirectory(
