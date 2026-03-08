@@ -1,6 +1,7 @@
 import AppKit
 import Darwin
 import SwiftUI
+import UserNotifications
 
 /// AppDelegate managing the NSStatusItem and NSPopover for the menu bar app
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -57,6 +58,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 popover.performClose(nil)
             }
         }
+
+        // Set up update notifications
+        appState.setupUpdateNotifications()
+        UNUserNotificationCenter.current().delegate = self
 
         // Initial data load
         Task {
@@ -243,6 +248,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             close(singleInstanceLockFD)
             singleInstanceLockFD = -1
         }
+    }
+}
+
+// MARK: - Notification Actions
+
+extension AppDelegate: UNUserNotificationCenterDelegate {
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        if response.actionIdentifier == AppState.updateActionIdentifier {
+            Task { @MainActor in
+                await appState.installAvailableUpdate()
+            }
+        }
+        completionHandler()
+    }
+
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        completionHandler([.banner, .sound])
     }
 }
 

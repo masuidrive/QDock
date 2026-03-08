@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import Observation
+import UserNotifications
 
 enum MenuBarUsageSource: String, CaseIterable, Identifiable {
     case highestUsage = "highest-usage"
@@ -304,8 +305,12 @@ final class AppState {
             lastUpdateCheckError = nil
 
             if Self.isVersion(latestRelease.version, newerThan: currentAppVersion) {
+                let isNewDiscovery = availableUpdateVersion != latestRelease.version
                 availableUpdateVersion = latestRelease.version
                 availableUpdateURL = latestRelease.releaseURL
+                if isNewDiscovery {
+                    postUpdateNotification(version: latestRelease.version)
+                }
             } else {
                 availableUpdateVersion = nil
                 availableUpdateURL = nil
@@ -336,6 +341,44 @@ final class AppState {
         } catch {
             updateInstallError = error.localizedDescription
         }
+    }
+
+    // MARK: - Update Notifications
+
+    static let updateActionIdentifier = "com.qdock.action.updateNow"
+    private static let updateCategoryIdentifier = "com.qdock.category.update"
+
+    /// Request notification permission and register the "Update Now" action.
+    func setupUpdateNotifications() {
+        let center = UNUserNotificationCenter.current()
+        center.requestAuthorization(options: [.alert, .sound]) { _, _ in }
+
+        let updateAction = UNNotificationAction(
+            identifier: Self.updateActionIdentifier,
+            title: "Update Now",
+            options: [.foreground]
+        )
+        let category = UNNotificationCategory(
+            identifier: Self.updateCategoryIdentifier,
+            actions: [updateAction],
+            intentIdentifiers: []
+        )
+        center.setNotificationCategories([category])
+    }
+
+    private func postUpdateNotification(version: String) {
+        let content = UNMutableNotificationContent()
+        content.title = "QDock Update Available"
+        content.body = "Version \(version) is ready to install."
+        content.sound = .default
+        content.categoryIdentifier = Self.updateCategoryIdentifier
+
+        let request = UNNotificationRequest(
+            identifier: "qdock-update-\(version)",
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(request)
     }
 
     private static func isVersion(_ lhs: String, newerThan rhs: String) -> Bool {

@@ -37,6 +37,37 @@ final class NetworkClient {
             request.setValue(value, forHTTPHeaderField: key)
         }
 
+        return try await execute(request, responseType: T.self)
+    }
+
+    /// Perform a POST request with form-urlencoded body
+    func post<T: Decodable>(
+        url: URL,
+        headers: [String: String] = [:],
+        formBody: [String: String],
+        responseType: T.Type
+    ) async throws -> T {
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+
+        for (key, value) in headers {
+            request.setValue(value, forHTTPHeaderField: key)
+        }
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+
+        let bodyString = formBody.map { key, value in
+            let encodedKey = key.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? key
+            let encodedValue = value.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? value
+            return "\(encodedKey)=\(encodedValue)"
+        }.joined(separator: "&")
+        request.httpBody = bodyString.data(using: .utf8)
+
+        return try await execute(request, responseType: T.self)
+    }
+
+    // MARK: - Private
+
+    private func execute<T: Decodable>(_ request: URLRequest, responseType: T.Type) async throws -> T {
         let (data, response) = try await session.data(for: request)
 
         guard let httpResponse = response as? HTTPURLResponse else {

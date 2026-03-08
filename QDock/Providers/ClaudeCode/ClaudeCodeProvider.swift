@@ -27,6 +27,9 @@ final class ClaudeCodeProvider: QuotaProvider {
     private let localStateTTL: TimeInterval = 30
     private let stateLock = NSLock()
     private let refreshLock = NSLock()
+    private let tokenRefreshLock = NSLock()
+    private var isRefreshingToken = false
+    private let tokenRefresher = ClaudeTokenRefresher()
 
     init() {
         if let saved = KeychainService.shared.get(key: "claude-token"), !saved.isEmpty {
@@ -84,6 +87,45 @@ final class ClaudeCodeProvider: QuotaProvider {
                 cachedQuota = quota
             }
             return quota
+        } catch let error as NetworkError {
+            // On 429, try refreshing the token and retrying once
+            if case .httpError(let statusCode, _) = error, statusCode == 429 {
+                if let newToken = await tryRefreshToken() {
+                    do {
+                        let quota = try await fetchFromAPI(token: newToken)
+                        withState { cachedQuota = quota }
+                        return quota
+                    } catch {
+                        // Retry also failed — fall through to stale cache
+                    }
+                }
+                // Refresh failed or retry failed — return stale cache or throw rateLimited
+                if let cached = withState({ cachedQuota }) {
+                    return QuotaData(
+                        id: cached.id,
+                        provider: cached.provider,
+                        planName: cached.planName,
+                        windows: cached.windows,
+                        accountEmail: cached.accountEmail,
+                        fetchedAt: cached.fetchedAt,
+                        isStale: true
+                    )
+                }
+                throw ProviderError.rateLimited
+            }
+            // Non-429 errors: return stale cache if available
+            if let cached = withState({ cachedQuota }) {
+                return QuotaData(
+                    id: cached.id,
+                    provider: cached.provider,
+                    planName: cached.planName,
+                    windows: cached.windows,
+                    accountEmail: cached.accountEmail,
+                    fetchedAt: cached.fetchedAt,
+                    isStale: true
+                )
+            }
+            throw error
         } catch {
             // Return cached data as stale if available
             if let cached = withState({ cachedQuota }) {
@@ -281,6 +323,107 @@ final class ClaudeCodeProvider: QuotaProvider {
             planName: planDisplayName,
             email: withState { localState.accountEmail }
         )
+    }
+
+    // MARK: - Token Refresh
+
+    /// Attempt to refresh the access token. Returns the new token on success, nil on failure.
+    /// Serialized via `tokenRefreshLock` to prevent concurrent refresh attempts.
+    private func tryRefreshToken() async -> String? {
+        // Serialize: only one refresh at a time
+        let acquired = claimRefreshSlot()
+        guard acquired else { return nil }
+        defer { releaseRefreshSlot() }
+
+        guard let refreshToken = resolveRefreshToken() else {
+            return nil
+        }
+
+        do {
+            let tokens = try await tokenRefresher.refresh(using: refreshToken)
+            persistRefreshedTokens(tokens)
+            return tokens.accessToken
+        } catch {
+            return nil
+        }
+    }
+
+    /// Try to claim the refresh slot. Returns true if this caller should proceed.
+    private func claimRefreshSlot() -> Bool {
+        tokenRefreshLock.lock()
+        defer { tokenRefreshLock.unlock() }
+        if isRefreshingToken { return false }
+        isRefreshingToken = true
+        return true
+    }
+
+    /// Release the refresh slot after completion.
+    private func releaseRefreshSlot() {
+        tokenRefreshLock.lock()
+        defer { tokenRefreshLock.unlock() }
+        isRefreshingToken = false
+    }
+
+    /// Find a refresh token from available sources:
+    /// 1. QDock Keychain (`claude-refresh-token`)
+    /// 2. ~/.claude/.credentials.json
+    /// 3. Claude Code Keychain (via security CLI)
+    private func resolveRefreshToken() -> String? {
+        // 1. QDock's own keychain
+        if let saved = KeychainService.shared.get(key: "claude-refresh-token"), !saved.isEmpty {
+            return saved
+        }
+
+        // 2. Credentials file
+        if let oauth = readCredentialsFileOAuth(), let rt = oauth.refreshToken, !rt.isEmpty {
+            return rt
+        }
+
+        // 3. Claude Code keychain
+        if let creds = ClaudeKeychainReader.readCredentials(),
+           let rt = creds.claudeAiOauth?.refreshToken, !rt.isEmpty {
+            return rt
+        }
+
+        return nil
+    }
+
+    /// Persist refreshed tokens to all stores so both QDock and Claude Code benefit.
+    private func persistRefreshedTokens(_ tokens: ClaudeTokenRefresher.RefreshedTokens) {
+        let expiresAtMs = Int64((Date().timeIntervalSince1970 + Double(tokens.expiresIn)) * 1000)
+
+        // 1. Write to ~/.claude/.credentials.json (atomic)
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let credPath = home.appendingPathComponent(".claude/.credentials.json")
+
+        // Read existing file to preserve other fields
+        var fileDict: [String: Any] = [:]
+        if let existingData = try? Data(contentsOf: credPath),
+           let existing = try? JSONSerialization.jsonObject(with: existingData) as? [String: Any] {
+            fileDict = existing
+        }
+
+        // Update the oauth section
+        var oauthDict: [String: Any] = (fileDict["claude_ai_oauth"] as? [String: Any]) ?? [:]
+        oauthDict["access_token"] = tokens.accessToken
+        oauthDict["refresh_token"] = tokens.refreshToken
+        oauthDict["expires_at"] = expiresAtMs
+        fileDict["claude_ai_oauth"] = oauthDict
+
+        if let jsonData = try? JSONSerialization.data(withJSONObject: fileDict, options: [.prettyPrinted, .sortedKeys]) {
+            try? jsonData.write(to: credPath, options: .atomic)
+        }
+
+        // 2. Save to QDock Keychain
+        try? KeychainService.shared.save(key: "claude-token", value: tokens.accessToken)
+        try? KeychainService.shared.save(key: "claude-refresh-token", value: tokens.refreshToken)
+
+        // 3. Update in-memory state
+        ClaudeKeychainReader.clearCache()
+        withState {
+            manualToken = tokens.accessToken
+        }
+        refreshLocalStateSync(force: true)
     }
 
     private func withState<T>(_ block: () -> T) -> T {
