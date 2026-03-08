@@ -13,6 +13,12 @@ final class ProviderManager {
     var onStateChanged: (() -> Void)?
 
     private var providersRevision: UInt64 = 0
+    @ObservationIgnored
+    private var fetchingProviders: Set<String> = []
+    @ObservationIgnored
+    private var backoffByProvider: [String: Int] = [:]  // retry count for exponential backoff
+    @ObservationIgnored
+    private var backoffTasks: [String: Task<Void, Never>] = [:]
 
     /// Maximum usage percent across all providers
     var maxUsagePercent: Double {
@@ -122,9 +128,16 @@ final class ProviderManager {
         }
     }
 
-    /// Fetch quota for a single provider with timeout
+    /// Fetch quota for a single provider with timeout.
+    /// Prevents duplicate concurrent fetches for the same provider.
     func fetchQuota(for provider: any QuotaProvider) async {
         let id = provider.id
+
+        // Prevent duplicate concurrent fetches
+        guard !fetchingProviders.contains(id) else { return }
+        fetchingProviders.insert(id)
+        defer { fetchingProviders.remove(id) }
+
         await provider.refreshLocalState()
 
         if !loadingProviders.contains(id) {
@@ -150,12 +163,25 @@ final class ProviderManager {
             if shouldStoreQuota(quota, for: id) {
                 quotaByProvider[id] = quota
             }
+            // Reset backoff on success
+            backoffByProvider.removeValue(forKey: id)
         } catch is CancellationError {
             setErrorIfNeeded("Request cancelled", for: id)
         } catch {
-            setErrorIfNeeded(error.localizedDescription, for: id)
-            if shouldClearQuota(for: error) {
-                quotaByProvider.removeValue(forKey: id)
+            // On rate limiting: don't show error if we have data, schedule backoff retry
+            if isRateLimitError(error) {
+                if quotaByProvider[id] != nil {
+                    // Have data — silently keep it, don't show error
+                    errorsByProvider.removeValue(forKey: id)
+                } else {
+                    setErrorIfNeeded(error.localizedDescription, for: id)
+                }
+                scheduleBackoffRetry(for: provider)
+            } else {
+                setErrorIfNeeded(error.localizedDescription, for: id)
+                if shouldClearQuota(for: error) {
+                    quotaByProvider.removeValue(forKey: id)
+                }
             }
         }
 
@@ -216,6 +242,29 @@ final class ProviderManager {
             || existing.accountEmail != newQuota.accountEmail
             || existing.isStale != newQuota.isStale
             || existing.fetchedAt != newQuota.fetchedAt
+    }
+
+    private func isRateLimitError(_ error: Error) -> Bool {
+        if let providerError = error as? ProviderError, case .rateLimited = providerError {
+            return true
+        }
+        return false
+    }
+
+    /// Exponential backoff retry: 30s, 60s, 120s, max 120s
+    private func scheduleBackoffRetry(for provider: any QuotaProvider) {
+        let id = provider.id
+        backoffTasks[id]?.cancel()
+
+        let retryCount = backoffByProvider[id] ?? 0
+        let delay = min(30.0 * pow(2.0, Double(retryCount)), 120.0)
+        backoffByProvider[id] = retryCount + 1
+
+        backoffTasks[id] = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard !Task.isCancelled else { return }
+            await self?.fetchQuota(for: provider)
+        }
     }
 
     private func notifyStateChanged() {

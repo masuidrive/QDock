@@ -86,62 +86,42 @@ final class ClaudeCodeProvider: QuotaProvider {
             }
             return quota
         } catch let error as NetworkError {
-            // On 429/401/403, try refreshing the token and retrying once
-            if case .httpError(let statusCode, _) = error,
-               statusCode == 429 || statusCode == 401 || statusCode == 403 {
-                if let newToken = await tryRefreshToken() {
+            if case .httpError(let statusCode, _) = error {
+                // 401/403: expired token — refresh and retry
+                if statusCode == 401 || statusCode == 403 {
+                    if let newToken = await tryRefreshToken() {
+                        do {
+                            let quota = try await fetchFromAPI(token: newToken)
+                            withState { cachedQuota = quota }
+                            return quota
+                        } catch {
+                            // Retry failed — fall through to stale cache
+                        }
+                    }
+                    return try returnStaleOrThrow(ProviderError.tokenExpired)
+                }
+
+                // 429: rate limited — DON'T refresh token, just wait and retry once
+                if statusCode == 429 {
+                    if let cached = withState({ cachedQuota }) {
+                        // Have cache — return it immediately, no point waiting
+                        return staleQuota(from: cached)
+                    }
+                    // No cache — wait briefly and retry once
+                    try? await Task.sleep(for: .seconds(5))
                     do {
-                        let quota = try await fetchFromAPI(token: newToken)
+                        let quota = try await fetchFromAPI(token: token)
                         withState { cachedQuota = quota }
                         return quota
                     } catch {
-                        // Retry also failed — fall through to stale cache
+                        throw ProviderError.rateLimited
                     }
                 }
-                // Refresh failed or retry failed — return stale cache or throw
-                if let cached = withState({ cachedQuota }) {
-                    return QuotaData(
-                        id: cached.id,
-                        provider: cached.provider,
-                        planName: cached.planName,
-                        windows: cached.windows,
-                        accountEmail: cached.accountEmail,
-                        fetchedAt: Date(),
-                        isStale: true
-                    )
-                }
-                if statusCode == 429 {
-                    throw ProviderError.rateLimited
-                }
-                throw ProviderError.tokenExpired
             }
-            // Other errors: return stale cache if available
-            if let cached = withState({ cachedQuota }) {
-                return QuotaData(
-                    id: cached.id,
-                    provider: cached.provider,
-                    planName: cached.planName,
-                    windows: cached.windows,
-                    accountEmail: cached.accountEmail,
-                    fetchedAt: Date(),
-                    isStale: true
-                )
-            }
-            throw error
+            // Other HTTP errors: return stale cache if available
+            return try returnStaleOrThrow(error)
         } catch {
-            // Return cached data as stale if available
-            if let cached = withState({ cachedQuota }) {
-                return QuotaData(
-                    id: cached.id,
-                    provider: cached.provider,
-                    planName: cached.planName,
-                    windows: cached.windows,
-                    accountEmail: cached.accountEmail,
-                    fetchedAt: Date(),
-                    isStale: true
-                )
-            }
-            throw error
+            return try returnStaleOrThrow(error)
         }
     }
 
@@ -295,6 +275,27 @@ final class ClaudeCodeProvider: QuotaProvider {
         let decoder = JSONDecoder()
         guard let data = try? Data(contentsOf: configPath) else { return nil }
         return try? decoder.decode(ClaudeGlobalConfig.self, from: data)
+    }
+
+    // MARK: - Stale Cache Helpers
+
+    private func staleQuota(from cached: QuotaData) -> QuotaData {
+        QuotaData(
+            id: cached.id,
+            provider: cached.provider,
+            planName: cached.planName,
+            windows: cached.windows,
+            accountEmail: cached.accountEmail,
+            fetchedAt: Date(),
+            isStale: true
+        )
+    }
+
+    private func returnStaleOrThrow(_ error: Error) throws -> QuotaData {
+        if let cached = withState({ cachedQuota }) {
+            return staleQuota(from: cached)
+        }
+        throw error
     }
 
     // MARK: - API
