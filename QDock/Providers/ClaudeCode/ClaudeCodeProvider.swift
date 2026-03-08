@@ -30,6 +30,7 @@ final class ClaudeCodeProvider: QuotaProvider {
     private let tokenRefreshLock = NSLock()
     private var isRefreshingToken = false
     private let tokenRefresher = ClaudeTokenRefresher()
+    private let localUsageParser = LocalUsageParser()
 
     init() {
         if let saved = KeychainService.shared.get(key: "claude-token"), !saved.isEmpty {
@@ -101,21 +102,13 @@ final class ClaudeCodeProvider: QuotaProvider {
                     return try returnStaleOrThrow(ProviderError.tokenExpired)
                 }
 
-                // 429: rate limited — DON'T refresh token, just wait and retry once
+                // 429: rate limited — DON'T refresh token
                 if statusCode == 429 {
                     if let cached = withState({ cachedQuota }) {
-                        // Have cache — return it immediately, no point waiting
                         return staleQuota(from: cached)
                     }
-                    // No cache — wait briefly and retry once
-                    try? await Task.sleep(for: .seconds(5))
-                    do {
-                        let quota = try await fetchFromAPI(token: token)
-                        withState { cachedQuota = quota }
-                        return quota
-                    } catch {
-                        throw ProviderError.rateLimited
-                    }
+                    // No cache — try local session data instead of showing error
+                    return quotaFromLocalSessions()
                 }
             }
             // Other HTTP errors: return stale cache if available
@@ -277,6 +270,63 @@ final class ClaudeCodeProvider: QuotaProvider {
         return try? decoder.decode(ClaudeGlobalConfig.self, from: data)
     }
 
+    // MARK: - Local Session Fallback
+
+    /// Build QuotaData from local session JSONL files when API is unavailable.
+    /// Estimates utilization based on subscription type and known token budgets.
+    private func quotaFromLocalSessions() -> QuotaData {
+        let sub = withState { localState.subscriptionType }?.lowercased() ?? "pro"
+
+        // Approximate 5h token budgets per plan (output-weighted).
+        // These are conservative estimates; the API percentage is always preferred.
+        let sessionBudget: Double = switch sub {
+        case "max_5x": 500_000_000
+        case "max":    100_000_000
+        case "team":    20_000_000
+        case "enterprise": 50_000_000
+        default:        15_000_000  // pro / free
+        }
+
+        let now = Date()
+        let fiveHoursAgo = now.addingTimeInterval(-5 * 3600)
+
+        let sessionUsage = localUsageParser.usage(since: fiveHoursAgo)
+
+        let sessionPercent = min(Double(sessionUsage.weightedTokens) / sessionBudget * 100.0, 100.0)
+
+        var windows: [QuotaWindow] = []
+
+        if sessionUsage.messageCount > 0 {
+            let tokenLabel = formatTokenCount(sessionUsage.outputTokens)
+            windows.append(QuotaWindow(
+                id: "session",
+                displayName: "Session (\(tokenLabel) out)",
+                usagePercent: sessionPercent,
+                resetsAt: now.addingTimeInterval(5 * 3600),
+                windowDurationMinutes: 300
+            ))
+        }
+
+        return QuotaData(
+            id: "claude-code",
+            provider: name,
+            planName: planDisplayName,
+            windows: windows,
+            accountEmail: withState { localState.accountEmail },
+            fetchedAt: now,
+            isStale: true
+        )
+    }
+
+    private func formatTokenCount(_ count: Int) -> String {
+        if count >= 1_000_000 {
+            return String(format: "%.1fM", Double(count) / 1_000_000)
+        } else if count >= 1_000 {
+            return String(format: "%.0fK", Double(count) / 1_000)
+        }
+        return "\(count)"
+    }
+
     // MARK: - Stale Cache Helpers
 
     private func staleQuota(from cached: QuotaData) -> QuotaData {
@@ -294,6 +344,11 @@ final class ClaudeCodeProvider: QuotaProvider {
     private func returnStaleOrThrow(_ error: Error) throws -> QuotaData {
         if let cached = withState({ cachedQuota }) {
             return staleQuota(from: cached)
+        }
+        // Last resort: derive usage from local session files
+        let local = quotaFromLocalSessions()
+        if !local.windows.isEmpty {
+            return local
         }
         throw error
     }
