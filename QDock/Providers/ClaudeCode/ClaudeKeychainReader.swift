@@ -84,6 +84,9 @@ final class ClaudeKeychainReader {
     /// - The login keychain is unlocked while the user is logged in
     /// - The `security` CLI tool has implicit access to the login keychain
     /// - Unlike SecItemCopyMatching, it doesn't check per-app ACLs
+    ///
+    /// Includes a 3-second timeout to prevent blocking the main thread if
+    /// the keychain is locked or the system is under load.
     private static func readViaSecurityCLI() -> Data? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
@@ -100,9 +103,21 @@ final class ClaudeKeychainReader {
             return nil
         }
 
-        // Read output before waitUntilExit to prevent deadlock
-        let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
+        // Wait with timeout to avoid indefinite blocking
+        let semaphore = DispatchSemaphore(value: 0)
+        var outputData = Data()
+
+        DispatchQueue.global(qos: .utility).async {
+            outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            semaphore.signal()
+        }
+
+        let timeoutResult = semaphore.wait(timeout: .now() + 3.0)
+        if timeoutResult == .timedOut {
+            process.terminate()
+            return nil
+        }
 
         guard process.terminationStatus == 0, !outputData.isEmpty else {
             return nil

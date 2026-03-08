@@ -215,6 +215,7 @@ final class ProviderManager {
             || existing.planName != newQuota.planName
             || existing.accountEmail != newQuota.accountEmail
             || existing.isStale != newQuota.isStale
+            || existing.fetchedAt != newQuota.fetchedAt
     }
 
     private func notifyStateChanged() {

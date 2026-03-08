@@ -9,6 +9,10 @@ final class ClaudeCodeDetector {
     private var cacheDate: Date?
     private let cacheTTL: TimeInterval = 30
 
+    private var cachedCLIPath: String?
+    private var cliPathCacheDate: Date?
+    private let cliPathCacheTTL: TimeInterval = 300 // 5 minutes
+
     /// Detection result with details about what was found
     struct DetectionResult {
         let isDetected: Bool
@@ -82,6 +86,8 @@ final class ClaudeCodeDetector {
         lock.lock()
         cachedResult = nil
         cacheDate = nil
+        cachedCLIPath = nil
+        cliPathCacheDate = nil
         lock.unlock()
     }
 
@@ -217,6 +223,29 @@ final class ClaudeCodeDetector {
     // MARK: - Helpers
 
     private func findCLIPath() -> String? {
+        // Return cached CLI path if fresh
+        lock.lock()
+        if let cached = cachedCLIPath,
+           let cacheTime = cliPathCacheDate,
+           Date().timeIntervalSince(cacheTime) < cliPathCacheTTL {
+            lock.unlock()
+            return cached
+        }
+        lock.unlock()
+
+        let found = findCLIPathUncached()
+
+        if let path = found {
+            lock.lock()
+            cachedCLIPath = path
+            cliPathCacheDate = Date()
+            lock.unlock()
+        }
+
+        return found
+    }
+
+    private func findCLIPathUncached() -> String? {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         let commonPaths = [
             "/usr/local/bin/claude",
