@@ -8,7 +8,7 @@ import Foundation
 /// 3. In-app onboarding fallback
 ///
 /// Data source:
-/// - Primary: GET https://api.claude.ai/api/auth/usage
+/// - Primary: GET https://api.anthropic.com/api/oauth/usage
 /// - Fallback: cached stale data on failure
 final class ClaudeCodeProvider: QuotaProvider {
     let id = "claude-code"

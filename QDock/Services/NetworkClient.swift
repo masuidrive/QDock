@@ -79,6 +79,17 @@ final class NetworkClient {
             throw NetworkError.httpError(statusCode: httpResponse.statusCode, body: body)
         }
 
+        do {
+            return try Self.makeAPIDecoder().decode(T.self, from: data)
+        } catch {
+            throw NetworkError.decodingFailed(error)
+        }
+    }
+
+    /// Decoder used for all API responses: snake_case keys and ISO8601
+    /// dates with or without fractional seconds. Exposed so tests decode
+    /// fixtures exactly the way production does.
+    static func makeAPIDecoder() -> JSONDecoder {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .custom { decoder in
             let container = try decoder.singleValueContainer()
@@ -87,12 +98,7 @@ final class NetworkClient {
             throw DecodingError.dataCorruptedError(in: container, debugDescription: "Invalid ISO8601 date: \(str)")
         }
         decoder.keyDecodingStrategy = .convertFromSnakeCase
-
-        do {
-            return try decoder.decode(T.self, from: data)
-        } catch {
-            throw NetworkError.decodingFailed(error)
-        }
+        return decoder
     }
 
     private static func parseISO8601Date(_ value: String) -> Date? {

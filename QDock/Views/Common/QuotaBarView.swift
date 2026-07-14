@@ -67,39 +67,3 @@ struct QuotaBarView: View {
     }
 }
 
-/// Compact version for inline use
-struct QuotaBarCompact: View {
-    let percent: Double
-    let width: CGFloat
-
-    @State private var displayedProgress: Double = 0
-
-    private var barColor: Color {
-        ColorTheme.colorForUsage(percent)
-    }
-
-    private var progressFraction: CGFloat {
-        CGFloat(max(0, min(displayedProgress, 100)) / 100)
-    }
-
-    var body: some View {
-        RoundedRectangle(cornerRadius: 4)
-            .fill(Color.primary.opacity(0.08))
-            .overlay(alignment: .leading) {
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(barColor)
-                    .scaleEffect(x: progressFraction, y: 1, anchor: .leading)
-            }
-            .frame(width: width, height: 8)
-        .onAppear {
-            withAnimation(.easeInOut(duration: 0.5)) {
-                displayedProgress = percent
-            }
-        }
-        .onChange(of: percent) { _, newValue in
-            withAnimation(.easeInOut(duration: 0.3)) {
-                displayedProgress = newValue
-            }
-        }
-    }
-}
