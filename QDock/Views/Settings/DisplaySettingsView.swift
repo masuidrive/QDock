@@ -69,6 +69,23 @@ struct DisplaySettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
+            Divider()
+
+            // Usage alerts
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Notifications")
+                    .font(.callout)
+                    .fontWeight(.medium)
+
+                Toggle("Alert at 70% and 90% usage", isOn: $appState.usageAlertsEnabled)
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+
+                Text("Each limit window notifies once per threshold and re-arms after it resets.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Spacer()
         }
         .padding(16)

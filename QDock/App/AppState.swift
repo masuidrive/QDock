@@ -81,6 +81,16 @@ final class AppState {
             userDefaults.set(launchAtLogin, forKey: Keys.launchAtLogin)
         }
     }
+    var usageAlertsEnabled: Bool {
+        didSet {
+            guard hasFinishedInitialization, usageAlertsEnabled != oldValue else { return }
+            userDefaults.set(usageAlertsEnabled, forKey: Keys.usageAlertsEnabled)
+            usageNotificationService.isEnabled = usageAlertsEnabled
+        }
+    }
+
+    @ObservationIgnored
+    let usageNotificationService = UsageNotificationService()
 
     @ObservationIgnored
     var onMenuBarPresentationChanged: ((MenuBarPresentation) -> Void)?
@@ -108,12 +118,15 @@ final class AppState {
         self.menuBarUsageSourceRaw = userDefaults.string(forKey: Keys.menuBarUsageSource) ?? MenuBarUsageSource.highestUsage.rawValue
         self.menuBarProviderId = userDefaults.string(forKey: Keys.menuBarProviderId) ?? ""
         self.launchAtLogin = userDefaults.object(forKey: Keys.launchAtLogin) as? Bool ?? false
+        self.usageAlertsEnabled = userDefaults.object(forKey: Keys.usageAlertsEnabled) as? Bool ?? true
+        usageNotificationService.isEnabled = usageAlertsEnabled
 
         providerManager.onStateChanged = { [weak self] in
             guard let self else { return }
             self.ensureMenuBarProviderSelection()
             self.updateDynamicRefreshInterval()
             self.emitMenuBarPresentationIfNeeded()
+            self.usageNotificationService.evaluate(self.providerManager.quotaByProvider)
         }
 
         refreshService.configure { [weak self] in
@@ -345,7 +358,7 @@ final class AppState {
 
     // MARK: - Update Notifications
 
-    static let updateActionIdentifier = "com.qdock.action.updateNow"
+    nonisolated static let updateActionIdentifier = "com.qdock.action.updateNow"
     private static let updateCategoryIdentifier = "com.qdock.category.update"
 
     /// Request notification permission and register the "Update Now" action.
@@ -411,5 +424,6 @@ private extension AppState {
         static let menuBarUsageSource = "menuBarUsageSource"
         static let menuBarProviderId = "menuBarProviderId"
         static let launchAtLogin = "launchAtLogin"
+        static let usageAlertsEnabled = "usageAlertsEnabled"
     }
 }
