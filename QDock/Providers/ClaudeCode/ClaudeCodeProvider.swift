@@ -89,6 +89,14 @@ final class ClaudeCodeProvider: QuotaProvider {
             if case .httpError(let statusCode, _) = error {
                 // 401/403: expired token — refresh and retry
                 if statusCode == 401 || statusCode == 403 {
+                    // A token without user:profile is rejected by the usage
+                    // endpoint no matter how fresh it is — refreshing won't
+                    // help, so give actionable guidance instead.
+                    if withState({ localState.missingProfileScope }) {
+                        throw ProviderError.authRequired(
+                            "This token lacks the user:profile scope required for usage data. Run `claude /login` in your terminal to re-authenticate."
+                        )
+                    }
                     if let newToken = await tryRefreshToken() {
                         do {
                             let quota = try await fetchFromAPI(token: newToken)
@@ -148,6 +156,12 @@ final class ClaudeCodeProvider: QuotaProvider {
         withState { localState.accessToken != nil }
     }
 
+    /// true when the active token is known to lack the `user:profile`
+    /// scope required by the usage endpoint (e.g. `claude setup-token`).
+    var missingProfileScope: Bool {
+        withState { localState.missingProfileScope }
+    }
+
     /// Set a manually-provided token (from Settings onboarding)
     func setManualToken(_ token: String) {
         if token.isEmpty {
@@ -172,30 +186,39 @@ final class ClaudeCodeProvider: QuotaProvider {
 
     // MARK: - Auth Chain
 
+    private struct ResolvedToken {
+        let token: String
+        /// Scopes granted to this token, when the source records them.
+        /// nil = unknown (e.g. manually pasted tokens).
+        let scopes: [String]?
+    }
+
     /// Resolve access token using fallback chain:
     /// 1. ~/.claude/.credentials.json file (most up-to-date, CLI writes here on refresh)
     /// 2. Keychain (silent read, has expiry check)
     /// 3. Manual token (from settings onboarding, fallback)
-    private func resolveAccessToken() -> String? {
+    private func resolveAccessTokenWithScopes() -> ResolvedToken? {
         // 1. Credentials file — CLI always writes the freshest token here
-        if let fileToken = readCredentialsFile() {
-            return fileToken
+        if let oauth = readCredentialsFileOAuth(),
+           !oauth.isExpired,
+           let fileToken = oauth.accessToken {
+            return ResolvedToken(token: fileToken, scopes: oauth.scopes)
         }
 
         // 2. Keychain (silent read — uses kSecUseAuthenticationUISkip, NEVER prompts)
         if let keychainToken = ClaudeKeychainReader.accessToken {
-            return keychainToken
+            return ResolvedToken(token: keychainToken, scopes: ClaudeKeychainReader.tokenScopes)
         }
 
         // 3. Manual/saved token (fallback from settings onboarding)
         if let manual = withState({ manualToken }), !manual.isEmpty {
-            return manual
+            return ResolvedToken(token: manual, scopes: nil)
         }
         if let saved = KeychainService.shared.get(key: "claude-token"), !saved.isEmpty {
             withState {
                 manualToken = saved
             }
-            return saved
+            return ResolvedToken(token: saved, scopes: nil)
         }
 
         return nil
@@ -218,7 +241,7 @@ final class ClaudeCodeProvider: QuotaProvider {
         let globalConfig = readGlobalConfig()
         let credentialsOAuth = readCredentialsFileOAuth()
 
-        let token = resolveAccessToken()
+        let resolved = resolveAccessTokenWithScopes()
         let email = globalConfig?.oauthAccount?.emailAddress
         let subscription = globalConfig?.oauthAccount?.subscriptionType
             ?? credentialsOAuth?.subscriptionType
@@ -227,7 +250,8 @@ final class ClaudeCodeProvider: QuotaProvider {
         withState {
             localState = ClaudeProviderLocalState(
                 detectionResult: detection,
-                accessToken: token,
+                accessToken: resolved?.token,
+                tokenScopes: resolved?.scopes,
                 accountEmail: email,
                 subscriptionType: subscription,
                 updatedAt: Date()
@@ -250,15 +274,6 @@ final class ClaudeCodeProvider: QuotaProvider {
     }
 
     /// Read access token from ~/.claude/.credentials.json
-    private func readCredentialsFile() -> String? {
-        guard let oauth = readCredentialsFileOAuth(),
-              !oauth.isExpired,
-              let token = oauth.accessToken else {
-            return nil
-        }
-        return token
-    }
-
     /// Read global config from ~/.claude.json
     private func readGlobalConfig() -> ClaudeGlobalConfig? {
         let configPath = FileManager.default.homeDirectoryForCurrentUser
@@ -427,14 +442,23 @@ final class ClaudeCodeProvider: QuotaProvider {
 private struct ClaudeProviderLocalState {
     let detectionResult: ClaudeCodeDetector.DetectionResult
     let accessToken: String?
+    let tokenScopes: [String]?
     let accountEmail: String?
     let subscriptionType: String?
     let updatedAt: Date
+
+    /// true when the token's scopes are known and lack `user:profile`,
+    /// which the usage endpoint requires (setup-token yields such tokens).
+    var missingProfileScope: Bool {
+        guard let tokenScopes, accessToken != nil else { return false }
+        return !tokenScopes.contains("user:profile")
+    }
 
     static var empty: ClaudeProviderLocalState {
         ClaudeProviderLocalState(
             detectionResult: .notFound,
             accessToken: nil,
+            tokenScopes: nil,
             accountEmail: nil,
             subscriptionType: nil,
             updatedAt: .distantPast

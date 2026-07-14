@@ -43,6 +43,11 @@ struct ProviderDetailView: View {
                             UsageCardView(window: window, barHeight: 10)
                         }
 
+                        // Paid overage state, when enabled
+                        if let credits = quota.usageCredits {
+                            UsageCreditsCardView(credits: credits)
+                        }
+
                         // Auth status
                         authStatusCard
 

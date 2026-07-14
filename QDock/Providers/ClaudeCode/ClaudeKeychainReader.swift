@@ -77,6 +77,13 @@ final class ClaudeKeychainReader {
         readCredentials()?.claudeAiOauth?.subscriptionType
     }
 
+    /// OAuth scopes granted to the stored token — NEVER prompts.
+    /// The usage endpoint requires `user:profile`; tokens minted by
+    /// `claude setup-token` lack it and get rejected.
+    static var tokenScopes: [String]? {
+        readCredentials()?.claudeAiOauth?.scopes
+    }
+
     // MARK: - Private: Shell-based Keychain Access
 
     /// Read credentials using `/usr/bin/security` CLI — NO password prompt.

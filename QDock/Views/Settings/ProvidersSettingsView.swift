@@ -148,6 +148,18 @@ struct ProviderSettingCard: View {
                     .foregroundStyle(.secondary)
             }
 
+            if claudeProvider?.missingProfileScope == true {
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(Color.usageOrange)
+                    Text("This token can't read usage data (missing user:profile scope). Run `claude /login` in your terminal to re-authenticate.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
             if let email = claudeProvider?.accountEmail {
                 HStack(spacing: 6) {
                     Image(systemName: "person.circle")

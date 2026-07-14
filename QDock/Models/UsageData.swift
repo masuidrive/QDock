@@ -2,13 +2,34 @@ import Foundation
 
 // MARK: - QuotaWindow
 
-/// A single usage quota window (e.g., 5-hour session or 7-day weekly)
+/// A single usage quota window (e.g., 5-hour session, 7-day weekly,
+/// or a model-scoped weekly limit like Fable)
 struct QuotaWindow: Identifiable, Equatable {
-    let id: String                      // "session", "weekly"
-    let displayName: String             // "Session (5h)", "Weekly"
+    let id: String                      // "session", "weekly", "weekly-fable"
+    let displayName: String             // "Session (5h)", "Weekly", "Fable Weekly"
     let usagePercent: Double            // 0.0 - 100.0
     let resetsAt: Date?                 // When the window resets
     let windowDurationMinutes: Int?     // Duration of the window in minutes
+    let severity: String?               // Server-reported severity, when available
+    let isActive: Bool?                 // Server-reported "currently binding" flag
+
+    init(
+        id: String,
+        displayName: String,
+        usagePercent: Double,
+        resetsAt: Date?,
+        windowDurationMinutes: Int?,
+        severity: String? = nil,
+        isActive: Bool? = nil
+    ) {
+        self.id = id
+        self.displayName = displayName
+        self.usagePercent = usagePercent
+        self.resetsAt = resetsAt
+        self.windowDurationMinutes = windowDurationMinutes
+        self.severity = severity
+        self.isActive = isActive
+    }
 
     /// Time remaining until reset
     var timeUntilReset: TimeInterval? {
@@ -34,10 +55,21 @@ struct QuotaWindow: Identifiable, Equatable {
         }
     }
 
-    /// Usage level for color coding
+    /// Usage level for color coding (server severity can only escalate)
     var level: UsageLevel {
-        UsageLevel.from(percent: usagePercent)
+        UsageLevel.from(percent: usagePercent, severity: severity)
     }
+}
+
+// MARK: - UsageCreditsInfo
+
+/// "Usage credits" (formerly "extra usage") state for providers that
+/// support paid overage on top of plan limits.
+struct UsageCreditsInfo: Equatable {
+    let usedCredits: Double?
+    let monthlyLimit: Double?
+    let utilization: Double?            // 0.0 - 100.0
+    let currency: String?
 }
 
 // MARK: - QuotaData
@@ -47,10 +79,31 @@ struct QuotaData: Identifiable, Equatable {
     let id: String                      // matches provider id
     let provider: String                // display name
     let planName: String?               // "Pro", "Max 5x", "Plus"
-    let windows: [QuotaWindow]          // session + weekly
+    let windows: [QuotaWindow]          // session + weekly + model-scoped
     let accountEmail: String?
     let fetchedAt: Date
     let isStale: Bool                   // true if from cache (offline)
+    let usageCredits: UsageCreditsInfo? // paid overage state, when enabled
+
+    init(
+        id: String,
+        provider: String,
+        planName: String?,
+        windows: [QuotaWindow],
+        accountEmail: String?,
+        fetchedAt: Date,
+        isStale: Bool,
+        usageCredits: UsageCreditsInfo? = nil
+    ) {
+        self.id = id
+        self.provider = provider
+        self.planName = planName
+        self.windows = windows
+        self.accountEmail = accountEmail
+        self.fetchedAt = fetchedAt
+        self.isStale = isStale
+        self.usageCredits = usageCredits
+    }
 
     /// The highest usage percent across all windows
     var maxUsagePercent: Double {
@@ -155,6 +208,21 @@ enum UsageLevel {
         case 50..<75: return .moderate
         case 75..<90: return .high
         default: return .critical
+        }
+    }
+
+    /// Combine the percent-derived level with a server-reported severity.
+    /// The server signal can only escalate, never downgrade, so an unknown
+    /// vocabulary value degrades gracefully to the percent-based level.
+    static func from(percent: Double, severity: String?) -> UsageLevel {
+        let base = from(percent: percent)
+        switch severity?.lowercased() {
+        case "warning", "elevated", "high":
+            return base == .critical ? .critical : .high
+        case "critical", "exceeded", "limited", "rate_limited":
+            return .critical
+        default:
+            return base
         }
     }
 

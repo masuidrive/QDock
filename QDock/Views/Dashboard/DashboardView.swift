@@ -73,6 +73,11 @@ struct DashboardView: View {
                                 UsageCardView(window: window)
                             }
 
+                            // Paid overage state, when enabled
+                            if let credits = quota.usageCredits {
+                                UsageCreditsCardView(credits: credits)
+                            }
+
                             // Account info footer
                             accountFooter(quota: quota)
                         } else if let provider = selectedProvider,
