@@ -51,7 +51,20 @@ jobs:
           cd dist
           shasum -a 256 "${{ steps.meta.outputs.dmg_name }}" > checksums.txt
 
+      - name: Upload GitHub release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: false
+          prerelease: ${{ steps.meta.outputs.prerelease == 'true' }}
+          files: |
+            dist/${{ steps.meta.outputs.dmg_name }}
+            dist/checksums.txt
+
+      # In-app one-click updates fetch the installer from npm. A failed
+      # publish (e.g. expired NPM_TOKEN) must not block the GitHub release;
+      # rerun this job after refreshing the secret to publish the installer.
       - name: Publish installer to npm
+        continue-on-error: true
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
@@ -62,12 +75,3 @@ jobs:
           else
             npm publish --access public --tag "${{ steps.meta.outputs.npm_tag }}"
           fi
-
-      - name: Upload GitHub release assets
-        uses: softprops/action-gh-release@v2
-        with:
-          draft: false
-          prerelease: ${{ steps.meta.outputs.prerelease == 'true' }}
-          files: |
-            dist/${{ steps.meta.outputs.dmg_name }}
-            dist/checksums.txt
