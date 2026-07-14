@@ -1,6 +1,12 @@
 import Foundation
 import UserNotifications
 
+/// UNUserNotificationCenter raises when the process has no app bundle
+/// (bare `swift run` binaries), so every notification call sites gates on this.
+enum NotificationCapability {
+    static let isAvailable = Bundle.main.bundleIdentifier != nil
+}
+
 /// Posts threshold notifications (70% warning, 90% critical) per quota window.
 ///
 /// Each window instance — identified by provider, window id, and reset time —
@@ -68,6 +74,7 @@ final class UsageNotificationService {
     }
 
     private func post(provider: String, window: QuotaWindow, critical: Bool) {
+        guard NotificationCapability.isAvailable else { return }
         if let last = lastNotificationAt,
            Date().timeIntervalSince(last) < minimumNotificationSpacing {
             return

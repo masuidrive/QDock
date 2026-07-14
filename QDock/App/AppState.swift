@@ -363,6 +363,7 @@ final class AppState {
 
     /// Request notification permission and register the "Update Now" action.
     func setupUpdateNotifications() {
+        guard NotificationCapability.isAvailable else { return }
         let center = UNUserNotificationCenter.current()
         center.requestAuthorization(options: [.alert, .sound]) { _, _ in }
 
@@ -380,6 +381,7 @@ final class AppState {
     }
 
     private func postUpdateNotification(version: String) {
+        guard NotificationCapability.isAvailable else { return }
         let content = UNMutableNotificationContent()
         content.title = "QDock Update Available"
         content.body = "Version \(version) is ready to install."

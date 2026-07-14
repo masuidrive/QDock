@@ -59,9 +59,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        // Set up update notifications
-        appState.setupUpdateNotifications()
-        UNUserNotificationCenter.current().delegate = self
+        // Set up update notifications. UNUserNotificationCenter raises
+        // NSInternalInconsistencyException without a real app bundle, so
+        // skip when running as a bare binary (swift run / .build/debug).
+        if NotificationCapability.isAvailable {
+            appState.setupUpdateNotifications()
+            UNUserNotificationCenter.current().delegate = self
+        }
 
         // Initial data load
         Task {
@@ -240,10 +244,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let observer = activeSpaceObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(observer)
         }
-        appState.onMenuBarPresentationChanged = nil
-        appState.providerManager.onStateChanged = nil
-        appState.sessionWatcher.stopWatching()
-        appState.refreshService.stopAutoRefresh()
+        // appState is nil when a second instance terminates before finishing
+        // launch (single-instance lock) — force-unwrapping here crashed.
+        if let appState {
+            appState.onMenuBarPresentationChanged = nil
+            appState.providerManager.onStateChanged = nil
+            appState.sessionWatcher.stopWatching()
+            appState.refreshService.stopAutoRefresh()
+        }
         if singleInstanceLockFD >= 0 {
             close(singleInstanceLockFD)
             singleInstanceLockFD = -1
