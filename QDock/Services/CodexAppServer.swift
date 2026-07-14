@@ -49,6 +49,10 @@ final class CodexAppServer {
             if process.isRunning {
                 process.terminate()
             }
+            // Reap off-thread so a terminated child never lingers as a zombie.
+            DispatchQueue.global(qos: .utility).async {
+                process.waitUntilExit()
+            }
         }
 
         // Step 1: Send initialize handshake (Codex app-server expects NDJSON JSON-RPC)
@@ -116,70 +120,123 @@ final class CodexAppServer {
         let requestData = try JSONSerialization.data(withJSONObject: payload, options: [])
         var lineData = requestData
         lineData.append(0x0A) // "\n"
-        pipe.fileHandleForWriting.write(lineData)
+        // write(contentsOf:) throws on a dead peer; the legacy write(_:) raises
+        // an ObjC exception that would crash the app if codex dies mid-handshake.
+        try pipe.fileHandleForWriting.write(contentsOf: lineData)
         return id
     }
 
+    /// Bridges the pipe's event-driven reads into a continuation that is
+    /// guaranteed to resume exactly once: on a matching response, EOF,
+    /// deadline, or task cancellation. The old polling loop blocked forever
+    /// in `availableData` when a live app-server sent nothing, which wedged
+    /// the whole refresh pipeline and leaked the subprocess.
+    private final class ResponseWaiter: @unchecked Sendable {
+        private let lock = NSLock()
+        private let handle: FileHandle
+        private var continuation: CheckedContinuation<JsonRpcResponse, Error>?
+        private var result: Result<JsonRpcResponse, Error>?
+        var buffer = Data()
+
+        init(handle: FileHandle) {
+            self.handle = handle
+        }
+
+        var isFinished: Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            return result != nil
+        }
+
+        func install(_ continuation: CheckedContinuation<JsonRpcResponse, Error>) {
+            lock.lock()
+            if let result {
+                lock.unlock()
+                continuation.resume(with: result)
+                return
+            }
+            self.continuation = continuation
+            lock.unlock()
+        }
+
+        func finish(with result: Result<JsonRpcResponse, Error>) {
+            lock.lock()
+            guard self.result == nil else {
+                lock.unlock()
+                return
+            }
+            self.result = result
+            let continuation = self.continuation
+            self.continuation = nil
+            lock.unlock()
+
+            handle.readabilityHandler = nil
+            continuation?.resume(with: result)
+        }
+    }
+
     private func readResponse(for requestId: Int, from pipe: Pipe, timeout: TimeInterval) async throws -> JsonRpcResponse {
-        try await withCheckedThrowingContinuation { continuation in
-            let handle = pipe.fileHandleForReading
+        let handle = pipe.fileHandleForReading
+        let maxBufferSize = self.maxBufferSize
+        let waiter = ResponseWaiter(handle: handle)
+        let decoder = JSONDecoder()
 
-            // Read with timeout
-            let deadline = Date().addingTimeInterval(timeout)
-            let maxBufferSize = self.maxBufferSize
-            DispatchQueue.global().async {
-                var buffer = Data()
-                var emptyReads = 0
-                let decoder = JSONDecoder()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                waiter.install(continuation)
 
-                while Date() < deadline {
-                    let chunk = handle.availableData
+                DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + timeout) {
+                    waiter.finish(with: .failure(ProviderError.apiError("Timeout waiting for codex app-server response")))
+                }
+
+                handle.readabilityHandler = { readHandle in
+                    let chunk = readHandle.availableData
                     if chunk.isEmpty {
-                        emptyReads += 1
-                        // EOF or process died — bail after a few empty reads
-                        if emptyReads > 60 {
-                            continuation.resume(throwing: ProviderError.apiError("codex app-server closed connection"))
-                            return
-                        }
-                        Thread.sleep(forTimeInterval: 0.05)
-                        continue
+                        // EOF — process closed stdout or died.
+                        waiter.finish(with: .failure(ProviderError.apiError("codex app-server closed connection")))
+                        return
                     }
-                    emptyReads = 0
-                    buffer.append(chunk)
+
+                    waiter.buffer.append(chunk)
 
                     // Parse newline-delimited JSON responses, ignoring notifications
-                    while let newLineIndex = buffer.firstIndex(of: 0x0A) {
-                        let lineData = Data(buffer[..<newLineIndex])
-                        buffer.removeSubrange(buffer.startIndex...newLineIndex)
+                    while let newLineIndex = waiter.buffer.firstIndex(of: 0x0A) {
+                        let lineData = Data(waiter.buffer[..<newLineIndex])
+                        waiter.buffer.removeSubrange(waiter.buffer.startIndex...newLineIndex)
 
                         guard let line = String(data: lineData, encoding: .utf8)?
                             .trimmingCharacters(in: .whitespacesAndNewlines),
-                              !line.isEmpty else { continue }
-                        guard let jsonData = line.data(using: .utf8) else { continue }
+                              !line.isEmpty,
+                              let jsonData = line.data(using: .utf8) else { continue }
 
                         do {
                             let response = try decoder.decode(JsonRpcResponse.self, from: jsonData)
                             if response.id == requestId {
-                                continuation.resume(returning: response)
+                                waiter.finish(with: .success(response))
                                 return
                             }
                         } catch {
                             // If this payload is for our request id but malformed, fail fast.
                             if let decodedId = Self.extractResponseId(from: jsonData), decodedId == requestId {
-                                continuation.resume(throwing: ProviderError.parseError("Failed to decode JSON-RPC response: \(error.localizedDescription)"))
+                                waiter.finish(with: .failure(ProviderError.parseError("Failed to decode JSON-RPC response: \(error.localizedDescription)")))
                                 return
                             }
                         }
                     }
 
-                    if buffer.count > maxBufferSize {
-                        continuation.resume(throwing: ProviderError.parseError("Response too large"))
-                        return
+                    if waiter.buffer.count > maxBufferSize {
+                        waiter.finish(with: .failure(ProviderError.parseError("Response too large")))
                     }
                 }
 
-                continuation.resume(throwing: ProviderError.apiError("Timeout waiting for codex app-server response"))
+                // Close the race where finish() ran before the handler was set
+                // (early cancellation/timeout): clearing is idempotent.
+                if waiter.isFinished {
+                    handle.readabilityHandler = nil
+                }
             }
+        } onCancel: {
+            waiter.finish(with: .failure(CancellationError()))
         }
     }
 
@@ -232,26 +289,16 @@ final class CodexAppServer {
             }
         }
 
-        // Try `which codex` via shell to pick up user PATH
-        let process = Process()
-        let pipe = Pipe()
-        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        process.arguments = ["-l", "-c", "which codex"]
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
-
-        do {
-            try process.run()
-            process.waitUntilExit()
-            if process.terminationStatus == 0 {
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                let path = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
-                if let path = path, !path.isEmpty {
-                    cacheCodexBinary(path)
-                    return path
-                }
-            }
-        } catch {}
+        // Try `which codex` via login shell to pick up user PATH (bounded:
+        // a hung login shell must never wedge a refresh cycle).
+        if let path = SubprocessRunner.runForString(
+            executable: "/bin/zsh",
+            arguments: ["-l", "-c", "which codex"],
+            timeout: 5.0
+        ), FileManager.default.isExecutableFile(atPath: path) {
+            cacheCodexBinary(path)
+            return path
+        }
 
         return nil
     }

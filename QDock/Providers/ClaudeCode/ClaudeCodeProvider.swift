@@ -43,12 +43,10 @@ final class ClaudeCodeProvider: QuotaProvider {
     // MARK: - QuotaProvider
 
     var isConfigured: Bool {
-        refreshLocalStateSync()
-        return withState { localState.detectionResult.isDetected }
+        withState { localState.detectionResult.isDetected }
     }
 
     var authStatus: AuthStatus {
-        refreshLocalStateSync()
         let result = withState { localState.detectionResult }
 
         guard result.isDetected else {
@@ -88,58 +86,33 @@ final class ClaudeCodeProvider: QuotaProvider {
             }
             return quota
         } catch let error as NetworkError {
-            // On 429, try refreshing the token and retrying once
-            if case .httpError(let statusCode, _) = error, statusCode == 429 {
-                if let newToken = await tryRefreshToken() {
-                    do {
-                        let quota = try await fetchFromAPI(token: newToken)
-                        withState { cachedQuota = quota }
-                        return quota
-                    } catch {
-                        // Retry also failed — fall through to stale cache
+            if case .httpError(let statusCode, _) = error {
+                // 401/403: expired token — refresh and retry
+                if statusCode == 401 || statusCode == 403 {
+                    if let newToken = await tryRefreshToken() {
+                        do {
+                            let quota = try await fetchFromAPI(token: newToken)
+                            withState { cachedQuota = quota }
+                            return quota
+                        } catch {
+                            // Retry failed — fall through to stale cache
+                        }
                     }
+                    return try returnStaleOrThrow(ProviderError.tokenExpired)
                 }
-                // Refresh failed or retry failed — return stale cache or throw rateLimited
-                if let cached = withState({ cachedQuota }) {
-                    return QuotaData(
-                        id: cached.id,
-                        provider: cached.provider,
-                        planName: cached.planName,
-                        windows: cached.windows,
-                        accountEmail: cached.accountEmail,
-                        fetchedAt: cached.fetchedAt,
-                        isStale: true
-                    )
+
+                // 429: rate limited — DON'T refresh token
+                if statusCode == 429 {
+                    if let cached = withState({ cachedQuota }) {
+                        return staleQuota(from: cached)
+                    }
+                    throw ProviderError.rateLimited
                 }
-                throw ProviderError.rateLimited
             }
-            // Non-429 errors: return stale cache if available
-            if let cached = withState({ cachedQuota }) {
-                return QuotaData(
-                    id: cached.id,
-                    provider: cached.provider,
-                    planName: cached.planName,
-                    windows: cached.windows,
-                    accountEmail: cached.accountEmail,
-                    fetchedAt: cached.fetchedAt,
-                    isStale: true
-                )
-            }
-            throw error
+            // Other HTTP errors: return stale cache if available
+            return try returnStaleOrThrow(error)
         } catch {
-            // Return cached data as stale if available
-            if let cached = withState({ cachedQuota }) {
-                return QuotaData(
-                    id: cached.id,
-                    provider: cached.provider,
-                    planName: cached.planName,
-                    windows: cached.windows,
-                    accountEmail: cached.accountEmail,
-                    fetchedAt: cached.fetchedAt,
-                    isStale: true
-                )
-            }
-            throw error
+            return try returnStaleOrThrow(error)
         }
     }
 
@@ -151,13 +124,11 @@ final class ClaudeCodeProvider: QuotaProvider {
     // MARK: - Account Info
 
     var accountEmail: String? {
-        refreshLocalStateSync()
-        return withState { localState.accountEmail }
+        withState { localState.accountEmail }
     }
 
     var subscriptionType: String? {
-        refreshLocalStateSync()
-        return withState { localState.subscriptionType }
+        withState { localState.subscriptionType }
     }
 
     var planDisplayName: String? {
@@ -174,8 +145,7 @@ final class ClaudeCodeProvider: QuotaProvider {
     }
 
     var isLoggedIn: Bool {
-        refreshLocalStateSync()
-        return withState { localState.accessToken != nil }
+        withState { localState.accessToken != nil }
     }
 
     /// Set a manually-provided token (from Settings onboarding)
@@ -203,11 +173,21 @@ final class ClaudeCodeProvider: QuotaProvider {
     // MARK: - Auth Chain
 
     /// Resolve access token using fallback chain:
-    /// 1. Manual token (from settings onboarding)
-    /// 2. ~/.claude/.credentials.json file
-    /// 3. Keychain (silent read)
+    /// 1. ~/.claude/.credentials.json file (most up-to-date, CLI writes here on refresh)
+    /// 2. Keychain (silent read, has expiry check)
+    /// 3. Manual token (from settings onboarding, fallback)
     private func resolveAccessToken() -> String? {
-        // 1. Manual/saved token
+        // 1. Credentials file — CLI always writes the freshest token here
+        if let fileToken = readCredentialsFile() {
+            return fileToken
+        }
+
+        // 2. Keychain (silent read — uses kSecUseAuthenticationUISkip, NEVER prompts)
+        if let keychainToken = ClaudeKeychainReader.accessToken {
+            return keychainToken
+        }
+
+        // 3. Manual/saved token (fallback from settings onboarding)
         if let manual = withState({ manualToken }), !manual.isEmpty {
             return manual
         }
@@ -216,16 +196,6 @@ final class ClaudeCodeProvider: QuotaProvider {
                 manualToken = saved
             }
             return saved
-        }
-
-        // 2. Credentials file (~/.claude/.credentials.json)
-        if let fileToken = readCredentialsFile() {
-            return fileToken
-        }
-
-        // 3. Keychain (silent read — uses kSecUseAuthenticationUISkip, NEVER prompts)
-        if let keychainToken = ClaudeKeychainReader.accessToken {
-            return keychainToken
         }
 
         return nil
@@ -296,6 +266,27 @@ final class ClaudeCodeProvider: QuotaProvider {
         let decoder = JSONDecoder()
         guard let data = try? Data(contentsOf: configPath) else { return nil }
         return try? decoder.decode(ClaudeGlobalConfig.self, from: data)
+    }
+
+    // MARK: - Stale Cache Helpers
+
+    private func staleQuota(from cached: QuotaData) -> QuotaData {
+        QuotaData(
+            id: cached.id,
+            provider: cached.provider,
+            planName: cached.planName,
+            windows: cached.windows,
+            accountEmail: cached.accountEmail,
+            fetchedAt: Date(),
+            isStale: true
+        )
+    }
+
+    private func returnStaleOrThrow(_ error: Error) throws -> QuotaData {
+        if let cached = withState({ cachedQuota }) {
+            return staleQuota(from: cached)
+        }
+        throw error
     }
 
     // MARK: - API

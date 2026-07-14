@@ -9,6 +9,12 @@ final class RefreshService {
     var lastRefreshDate: Date?
     var error: String?
 
+    @ObservationIgnored
+    private var refreshStartedAt: Date?
+    /// A refresh "running" longer than this is considered wedged; the guard
+    /// stops blocking so auto-refresh can never die silently.
+    private static let wedgedRefreshThreshold: TimeInterval = 120
+
     private var refreshTask: Task<Void, Never>?
     private var onRefresh: (() async -> Void)?
     @ObservationIgnored
@@ -43,14 +49,21 @@ final class RefreshService {
     }
 
     func refresh() async {
-        guard !isRefreshing else { return }
+        if isRefreshing {
+            let wedged = refreshStartedAt.map {
+                Date().timeIntervalSince($0) > Self.wedgedRefreshThreshold
+            } ?? true
+            guard wedged else { return }
+        }
         isRefreshing = true
+        refreshStartedAt = Date()
         error = nil
 
         await onRefresh?()
 
         lastRefreshDate = Date()
         isRefreshing = false
+        refreshStartedAt = nil
     }
 
     func updateInterval(_ interval: TimeInterval) {

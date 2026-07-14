@@ -34,13 +34,14 @@ final class CodexProvider: QuotaProvider {
 
     // MARK: - QuotaProvider
 
+    // NOTE: property getters must stay subprocess-free — SwiftUI evaluates
+    // them on the main thread during renders. State is refreshed via
+    // refreshLocalState() from fetch cycles instead.
     var isConfigured: Bool {
-        refreshLocalStateSync()
-        return withState { localState.isConfigured }
+        withState { localState.isConfigured }
     }
 
     var authStatus: AuthStatus {
-        refreshLocalStateSync()
         let snapshot = withState { localState }
         guard snapshot.isInstalled else {
             return .notInstalled(message: "Codex not detected. Install via npm: npm i -g @openai/codex")
