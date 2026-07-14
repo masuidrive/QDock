@@ -169,7 +169,21 @@ final class CodexProvider: QuotaProvider {
             ))
         }
 
-        let resolvedPlanName = rateLimits.planType.map { formatPlanName($0) } ?? planDisplayName
+        var resolvedPlanName = rateLimits.planType.map { formatPlanName($0) } ?? planDisplayName
+        if let credits = rateLimits.credits, credits.hasCredits == true {
+            let suffix: String
+            if credits.unlimited == true {
+                suffix = "Unlimited credits"
+            } else if let balance = credits.balance {
+                let amount = balance == balance.rounded()
+                    ? String(format: "%.0f", balance)
+                    : String(format: "%.2f", balance)
+                suffix = "\(amount) credits"
+            } else {
+                suffix = "Credits available"
+            }
+            resolvedPlanName = [resolvedPlanName, suffix].compactMap { $0 }.joined(separator: " · ")
+        }
 
         return QuotaData(
             id: "codex",

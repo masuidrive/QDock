@@ -65,23 +65,72 @@ struct JsonRpcError: Decodable {
 // MARK: - Rate Limits
 
 struct RateLimitsResult: Decodable {
+    let limitId: String?
+    let limitName: String?
     let primary: RateLimitWindow?
     let secondary: RateLimitWindow?
+    let credits: CodexCredits?
     let planType: String?
+    let rateLimitReachedType: String?
 
     enum CodingKeys: String, CodingKey {
+        case limitId
+        case limitIdLegacy = "limit_id"
+        case limitName
+        case limitNameLegacy = "limit_name"
         case primary
         case secondary
+        case credits
         case planType
         case planTypeLegacy = "plan_type"
+        case rateLimitReachedType
+        case rateLimitReachedTypeLegacy = "rate_limit_reached_type"
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        limitId = try container.decodeIfPresent(String.self, forKey: .limitId)
+            ?? container.decodeIfPresent(String.self, forKey: .limitIdLegacy)
+        limitName = try container.decodeIfPresent(String.self, forKey: .limitName)
+            ?? container.decodeIfPresent(String.self, forKey: .limitNameLegacy)
         primary = try container.decodeIfPresent(RateLimitWindow.self, forKey: .primary)
         secondary = try container.decodeIfPresent(RateLimitWindow.self, forKey: .secondary)
+        credits = try container.decodeIfPresent(CodexCredits.self, forKey: .credits)
         planType = try container.decodeIfPresent(String.self, forKey: .planType)
             ?? container.decodeIfPresent(String.self, forKey: .planTypeLegacy)
+        rateLimitReachedType = try container.decodeIfPresent(String.self, forKey: .rateLimitReachedType)
+            ?? container.decodeIfPresent(String.self, forKey: .rateLimitReachedTypeLegacy)
+    }
+}
+
+/// Purchased credit state reported alongside rate limits (app-server v2)
+struct CodexCredits: Decodable {
+    let hasCredits: Bool?
+    let unlimited: Bool?
+    let balance: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case hasCredits
+        case hasCreditsLegacy = "has_credits"
+        case unlimited
+        case balance
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        hasCredits = try container.decodeIfPresent(Bool.self, forKey: .hasCredits)
+            ?? container.decodeIfPresent(Bool.self, forKey: .hasCreditsLegacy)
+        unlimited = try container.decodeIfPresent(Bool.self, forKey: .unlimited)
+        // Balance arrives as a number or a numeric string depending on version.
+        if let value = try? container.decode(Double.self, forKey: .balance) {
+            balance = value
+        } else if let value = try? container.decode(Int.self, forKey: .balance) {
+            balance = Double(value)
+        } else if let value = try? container.decode(String.self, forKey: .balance) {
+            balance = Double(value)
+        } else {
+            balance = nil
+        }
     }
 }
 
