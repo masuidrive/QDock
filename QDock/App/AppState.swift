@@ -35,7 +35,6 @@ final class AppState {
     let sessionWatcher: SessionFileWatcher
     let appUpdateService: AppUpdateService
 
-    var selectedProvider: (any QuotaProvider)?
     var showingSettings = false
     var availableUpdateVersion: String?
     var availableUpdateURL: URL?
@@ -88,6 +87,21 @@ final class AppState {
             usageNotificationService.isEnabled = usageAlertsEnabled
         }
     }
+    var appearanceModeRaw: String {
+        didSet {
+            guard hasFinishedInitialization, appearanceModeRaw != oldValue else { return }
+            userDefaults.set(appearanceModeRaw, forKey: Keys.appearanceMode)
+            onAppearanceModeChanged?(appearanceMode)
+        }
+    }
+
+    var appearanceMode: AppearanceMode {
+        get { AppearanceMode(rawValue: appearanceModeRaw) ?? .system }
+        set { appearanceModeRaw = newValue.rawValue }
+    }
+
+    @ObservationIgnored
+    var onAppearanceModeChanged: ((AppearanceMode) -> Void)?
 
     @ObservationIgnored
     let usageNotificationService = UsageNotificationService()
@@ -119,6 +133,7 @@ final class AppState {
         self.menuBarProviderId = userDefaults.string(forKey: Keys.menuBarProviderId) ?? ""
         self.launchAtLogin = userDefaults.object(forKey: Keys.launchAtLogin) as? Bool ?? false
         self.usageAlertsEnabled = userDefaults.object(forKey: Keys.usageAlertsEnabled) as? Bool ?? true
+        self.appearanceModeRaw = userDefaults.string(forKey: Keys.appearanceMode) ?? AppearanceMode.system.rawValue
         usageNotificationService.isEnabled = usageAlertsEnabled
 
         providerManager.onStateChanged = { [weak self] in
@@ -427,5 +442,6 @@ private extension AppState {
         static let menuBarProviderId = "menuBarProviderId"
         static let launchAtLogin = "launchAtLogin"
         static let usageAlertsEnabled = "usageAlertsEnabled"
+        static let appearanceMode = "appearanceMode"
     }
 }

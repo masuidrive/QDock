@@ -27,6 +27,12 @@ struct ProviderSettingCard: View {
     @State private var codexTokenInput: String = ""
     @State private var showCodexTokenInput: Bool = false
 
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var palette: NotebookPalette {
+        ColorTheme.palette(for: colorScheme)
+    }
+
     private var providerErrorMessage: String? {
         appState.providerManager.errorsByProvider[provider.id]
     }
@@ -70,10 +76,10 @@ struct ProviderSettingCard: View {
         .padding(14)
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(.ultraThinMaterial)
+                .fill(palette.lifted)
                 .overlay(
                     RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color.white.opacity(0.05), lineWidth: 0.5)
+                        .stroke(palette.hairline, lineWidth: 1)
                 )
         )
         .task(id: provider.id) {

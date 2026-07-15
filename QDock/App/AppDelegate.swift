@@ -40,9 +40,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         popover.contentSize = NSSize(width: 380, height: 520)
         popover.behavior = .transient
         popover.animates = true
+        popover.appearance = appState.appearanceMode.nsAppearance
 
         let contentView = PopoverContentView(appState: appState)
-        popover.contentViewController = NSHostingController(rootView: contentView)
+        let hostingController = NSHostingController(rootView: contentView)
+        // Let the popover hug the dashboard's natural height instead of a fixed 520.
+        hostingController.sizingOptions = .preferredContentSize
+        popover.contentViewController = hostingController
+
+        appState.onAppearanceModeChanged = { [weak self] mode in
+            Task { @MainActor in
+                guard let self else { return }
+                self.popover.appearance = mode.nsAppearance
+                self.tintPopoverChrome()
+            }
+        }
 
         appState.onMenuBarPresentationChanged = { [weak self] presentation in
             Task { @MainActor in
@@ -96,12 +108,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             popover.contentViewController?.view.window?.makeKey()
+            tintPopoverChrome()
 
             // Refresh data when popover opens
             Task {
                 await appState.manualRefresh()
             }
         }
+    }
+
+    /// Paints the popover frame (including the anchor arrow) in the same
+    /// color as the dashboard panel, so the popover reads as one flat
+    /// surface instead of system material behind the view.
+    private func tintPopoverChrome() {
+        guard let frameView = popover.contentViewController?.view.window?.contentView?.superview else {
+            return
+        }
+        let appearance = popover.appearance ?? NSApp.effectiveAppearance
+        let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let panel = isDark
+            ? NSColor(red: 0.078, green: 0.078, blue: 0.078, alpha: 1)   // #141414
+            : NSColor.white
+        frameView.wantsLayer = true
+        frameView.layer?.backgroundColor = panel.cgColor
     }
 
     @MainActor
@@ -196,40 +225,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func createProgressIcon(percent: Double) -> NSImage {
         let size: CGFloat = 18
         let lineWidth: CGFloat = 2.5
-        let image = NSImage(size: NSSize(width: size, height: size))
 
-        // Draw progress circle
-        image.lockFocus()
+        // Drawn via a handler so the dynamic usage color re-resolves for the
+        // menu bar's effective appearance (legible on light and dark bars).
+        let image = NSImage(size: NSSize(width: size, height: size), flipped: false) { _ in
+            let iconRect = NSRect(x: lineWidth / 2, y: lineWidth / 2,
+                                  width: size - lineWidth, height: size - lineWidth)
+            let center = NSPoint(x: size / 2, y: size / 2)
+            let radius = (size - lineWidth) / 2
 
-        let iconRect = NSRect(x: lineWidth / 2, y: lineWidth / 2,
-                              width: size - lineWidth, height: size - lineWidth)
-        let center = NSPoint(x: size / 2, y: size / 2)
-        let radius = (size - lineWidth) / 2
+            let bgPath = NSBezierPath(ovalIn: iconRect)
+            bgPath.lineWidth = lineWidth
+            NSColor.systemGray.withAlphaComponent(0.3).setStroke()
+            bgPath.stroke()
 
-        let bgPath = NSBezierPath(ovalIn: iconRect)
-        bgPath.lineWidth = lineWidth
-        NSColor.systemGray.withAlphaComponent(0.3).setStroke()
-        bgPath.stroke()
+            if percent > 0 {
+                let startAngle: CGFloat = 90
+                let endAngle: CGFloat = 90 - (360 * min(percent, 100) / 100)
 
-        if percent > 0 {
-            let startAngle: CGFloat = 90
-            let endAngle: CGFloat = 90 - (360 * min(percent, 100) / 100)
-
-            let progressPath = NSBezierPath()
-            progressPath.appendArc(
-                withCenter: center,
-                radius: radius,
-                startAngle: startAngle,
-                endAngle: endAngle,
-                clockwise: true
-            )
-            progressPath.lineWidth = lineWidth
-            progressPath.lineCapStyle = .round
-            ColorTheme.nsColorForUsage(percent).setStroke()
-            progressPath.stroke()
+                let progressPath = NSBezierPath()
+                progressPath.appendArc(
+                    withCenter: center,
+                    radius: radius,
+                    startAngle: startAngle,
+                    endAngle: endAngle,
+                    clockwise: true
+                )
+                progressPath.lineWidth = lineWidth
+                progressPath.lineCapStyle = .round
+                ColorTheme.nsColorForUsage(percent).setStroke()
+                progressPath.stroke()
+            }
+            return true
         }
-
-        image.unlockFocus()
         image.isTemplate = false
         return image
     }
@@ -291,19 +319,17 @@ struct PopoverContentView: View {
 
     var body: some View {
         Group {
-            if appState.selectedProvider != nil {
-                ProviderDetailView(appState: appState)
-                    .transition(.move(edge: .trailing).combined(with: .opacity))
-            } else if appState.showingSettings {
+            if appState.showingSettings {
                 SettingsView(appState: appState)
+                    .frame(height: 520, alignment: .top)
                     .transition(.move(edge: .trailing).combined(with: .opacity))
             } else {
+                // The dashboard sizes to its content, like the site popover.
                 DashboardView(appState: appState)
                     .transition(.opacity)
             }
         }
-        .animation(.easeInOut(duration: 0.25), value: appState.selectedProvider?.id)
         .animation(.easeInOut(duration: 0.25), value: appState.showingSettings)
-        .frame(width: 380, height: 520, alignment: .top)
+        .frame(width: 380, alignment: .top)
     }
 }

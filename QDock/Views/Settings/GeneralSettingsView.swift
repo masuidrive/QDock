@@ -11,9 +11,7 @@ struct GeneralSettingsView: View {
         VStack(alignment: .leading, spacing: 16) {
             // Launch at login
             VStack(alignment: .leading, spacing: 6) {
-                Text("Startup")
-                    .font(.callout)
-                    .fontWeight(.medium)
+                SettingsSectionHeader(text: "Startup")
 
                 Toggle("Launch at login", isOn: $launchAtLoginEnabled)
                     .toggleStyle(.switch)
@@ -27,13 +25,11 @@ struct GeneralSettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            Divider()
+            SettingsHairline()
 
             // About
             VStack(alignment: .leading, spacing: 6) {
-                Text("About")
-                    .font(.callout)
-                    .fontWeight(.medium)
+                SettingsSectionHeader(text: "About")
 
                 VStack(alignment: .leading, spacing: 4) {
                     aboutRow("Version", value: appState.currentAppVersion)

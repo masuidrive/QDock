@@ -1,10 +1,17 @@
 import SwiftUI
 
-/// Main settings view with tab navigation
+/// Main settings view with tab navigation, styled to match the
+/// notebook dashboard panel.
 @MainActor
 struct SettingsView: View {
     let appState: AppState
     @State private var selectedTab: SettingsTab = .providers
+
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var palette: NotebookPalette {
+        ColorTheme.palette(for: colorScheme)
+    }
 
     enum SettingsTab: String, CaseIterable {
         case providers = "Providers"
@@ -16,7 +23,9 @@ struct SettingsView: View {
         VStack(spacing: 0) {
             headerView
 
-            Divider()
+            Rectangle()
+                .fill(palette.hairline)
+                .frame(height: 1)
 
             // Tab picker
             Picker("", selection: $selectedTab) {
@@ -26,7 +35,7 @@ struct SettingsView: View {
             }
             .pickerStyle(.segmented)
             .padding(.horizontal, 16)
-            .padding(.vertical, 8)
+            .padding(.vertical, 10)
 
             // Tab content
             ScrollView {
@@ -45,30 +54,72 @@ struct SettingsView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .background(.ultraThinMaterial)
+        .background(palette.panel)
     }
 
     private var headerView: some View {
-        Text("Settings")
-            .font(.headline)
-            .frame(maxWidth: .infinity)
-            .overlay(alignment: .leading) {
-                Button {
-                    appState.showingSettings = false
-                } label: {
-                    Label("Back", systemImage: "chevron.left")
-                        .font(.system(size: 13, weight: .semibold))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .contentShape(Rectangle())
+        HStack(spacing: 10) {
+            Button {
+                appState.showingSettings = false
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 10, weight: .semibold))
+                    Text("Back")
+                        .font(.system(size: 12))
                 }
-                .buttonStyle(.bordered)
-                .buttonBorderShape(.capsule)
-                .controlSize(.small)
-                .keyboardShortcut(.cancelAction)
-                .help("Back to dashboard")
+                .foregroundStyle(palette.section)
+                .contentShape(Rectangle())
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
+            .buttonStyle(.plain)
+            .keyboardShortcut(.cancelAction)
+            .help("Back to dashboard")
+
+            Spacer()
+
+            Text("Settings")
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(palette.title)
+
+            Spacer()
+
+            // Mirrors the back control's width so the title stays centered.
+            HStack(spacing: 4) {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 10, weight: .semibold))
+                Text("Back")
+                    .font(.system(size: 12))
+            }
+            .hidden()
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+    }
+}
+
+// MARK: - Shared section header
+
+/// Section heading used across settings tabs, matching the dashboard's
+/// provider-name treatment.
+struct SettingsSectionHeader: View {
+    let text: String
+
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(ColorTheme.palette(for: colorScheme).section)
+    }
+}
+
+/// Hairline separator matching the dashboard.
+struct SettingsHairline: View {
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        Rectangle()
+            .fill(ColorTheme.palette(for: colorScheme).hairline)
+            .frame(height: 1)
     }
 }

@@ -12,11 +12,28 @@ struct DisplaySettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
+            // Appearance
+            VStack(alignment: .leading, spacing: 6) {
+                SettingsSectionHeader(text: "Appearance")
+
+                Picker("", selection: $appState.appearanceModeRaw) {
+                    ForEach(AppearanceMode.allCases) { mode in
+                        Text(mode.displayName).tag(mode.rawValue)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+
+                Text("System follows macOS. Dark and Light force the popover's theme.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            SettingsHairline()
+
             // Refresh interval
             VStack(alignment: .leading, spacing: 6) {
-                Text("Auto-Refresh Interval")
-                    .font(.callout)
-                    .fontWeight(.medium)
+                SettingsSectionHeader(text: "Auto-Refresh Interval")
 
                 Picker("", selection: $appState.refreshIntervalSeconds) {
                     ForEach(RefreshInterval.allCases) { interval in
@@ -30,13 +47,11 @@ struct DisplaySettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            Divider()
+            SettingsHairline()
 
             // Menu bar display
             VStack(alignment: .leading, spacing: 6) {
-                Text("Menu Bar Display")
-                    .font(.callout)
-                    .fontWeight(.medium)
+                SettingsSectionHeader(text: "Menu Bar Display")
 
                 Toggle("Show usage percent in menu bar", isOn: $appState.showPercentInMenuBar)
                     .toggleStyle(.switch)
@@ -69,13 +84,11 @@ struct DisplaySettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            Divider()
+            SettingsHairline()
 
             // Usage alerts
             VStack(alignment: .leading, spacing: 6) {
-                Text("Notifications")
-                    .font(.callout)
-                    .fontWeight(.medium)
+                SettingsSectionHeader(text: "Notifications")
 
                 Toggle("Alert at 70% and 90% usage", isOn: $appState.usageAlertsEnabled)
                     .toggleStyle(.switch)
