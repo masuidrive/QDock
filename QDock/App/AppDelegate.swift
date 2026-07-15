@@ -100,6 +100,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    @MainActor
     @objc private func togglePopover() {
         guard let button = statusItem.button else { return }
 
@@ -119,17 +120,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Paints the popover frame (including the anchor arrow) in the same
     /// color as the dashboard panel, so the popover reads as one flat
-    /// surface instead of system material behind the view.
+    /// surface instead of system material behind the view. In Glass mode
+    /// the tint is cleared so the native material (Liquid Glass on
+    /// macOS 26+) shows through.
+    @MainActor
     private func tintPopoverChrome() {
         guard let frameView = popover.contentViewController?.view.window?.contentView?.superview else {
             return
         }
+        frameView.wantsLayer = true
+
+        if appState.appearanceMode.isGlass {
+            frameView.layer?.backgroundColor = nil
+            return
+        }
+
         let appearance = popover.appearance ?? NSApp.effectiveAppearance
         let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
         let panel = isDark
             ? NSColor(red: 0.078, green: 0.078, blue: 0.078, alpha: 1)   // #141414
             : NSColor.white
-        frameView.wantsLayer = true
         frameView.layer?.backgroundColor = panel.cgColor
     }
 

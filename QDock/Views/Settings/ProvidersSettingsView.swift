@@ -33,6 +33,11 @@ struct ProviderSettingCard: View {
         ColorTheme.palette(for: colorScheme)
     }
 
+    /// Over glass, opaque card fills stick out; use tonal overlays instead.
+    private var isGlass: Bool {
+        appState.appearanceMode.isGlass
+    }
+
     private var providerErrorMessage: String? {
         appState.providerManager.errorsByProvider[provider.id]
     }
@@ -76,10 +81,13 @@ struct ProviderSettingCard: View {
         .padding(14)
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(palette.lifted)
+                .fill(isGlass ? Color.primary.opacity(0.05) : palette.lifted)
                 .overlay(
                     RoundedRectangle(cornerRadius: 12)
-                        .stroke(palette.hairline, lineWidth: 1)
+                        .stroke(
+                            isGlass ? Color.primary.opacity(0.10) : palette.hairline,
+                            lineWidth: 1
+                        )
                 )
         )
         .task(id: provider.id) {

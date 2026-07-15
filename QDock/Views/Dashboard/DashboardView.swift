@@ -16,6 +16,24 @@ struct DashboardView: View {
         ColorTheme.palette(for: colorScheme)
     }
 
+    /// Glass mode keeps the popover's native translucent material, so the
+    /// panel goes clear and separators/strips become tonal overlays.
+    private var isGlass: Bool {
+        appState.appearanceMode.isGlass
+    }
+
+    private var panelFill: Color {
+        isGlass ? .clear : palette.panel
+    }
+
+    private var hairlineFill: Color {
+        isGlass ? Color.primary.opacity(0.12) : palette.hairline
+    }
+
+    private var liftedFill: Color {
+        isGlass ? Color.primary.opacity(0.05) : palette.lifted
+    }
+
     private var activeProviders: [any QuotaProvider] {
         appState.providerManager.activeProviders
     }
@@ -40,7 +58,7 @@ struct DashboardView: View {
 
                         if index < activeProviders.count - 1 {
                             Rectangle()
-                                .fill(palette.hairline)
+                                .fill(hairlineFill)
                                 .frame(height: 1)
                                 .padding(.vertical, 10)
                         }
@@ -52,13 +70,13 @@ struct DashboardView: View {
             }
 
             Rectangle()
-                .fill(palette.hairline)
+                .fill(hairlineFill)
                 .frame(height: 1)
 
             footerView
-                .background(palette.lifted)
+                .background(liftedFill)
         }
-        .background(palette.panel)
+        .background(panelFill)
     }
 
     // MARK: - Header ("Usage" | updated · refresh · settings)
@@ -279,7 +297,7 @@ struct DashboardView: View {
                 .padding(.vertical, 8)
                 .background(
                     RoundedRectangle(cornerRadius: 8)
-                        .fill(palette.panel)
+                        .fill(isGlass ? Color.primary.opacity(0.06) : palette.panel)
                 )
             }
 

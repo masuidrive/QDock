@@ -24,12 +24,12 @@ struct DisplaySettingsView: View {
                 .pickerStyle(.segmented)
                 .labelsHidden()
 
-                Text("System follows macOS. Dark and Light force the popover's theme.")
+                Text("System follows macOS. Dark and Light force the popover's theme. Glass uses the native translucent material (Liquid Glass on macOS 26+).")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
-            SettingsHairline()
+            SettingsHairline(isGlass: appState.appearanceMode.isGlass)
 
             // Refresh interval
             VStack(alignment: .leading, spacing: 6) {
@@ -47,7 +47,7 @@ struct DisplaySettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            SettingsHairline()
+            SettingsHairline(isGlass: appState.appearanceMode.isGlass)
 
             // Menu bar display
             VStack(alignment: .leading, spacing: 6) {
@@ -84,7 +84,7 @@ struct DisplaySettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            SettingsHairline()
+            SettingsHairline(isGlass: appState.appearanceMode.isGlass)
 
             // Usage alerts
             VStack(alignment: .leading, spacing: 6) {

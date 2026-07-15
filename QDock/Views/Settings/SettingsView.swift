@@ -19,12 +19,16 @@ struct SettingsView: View {
         case general = "General"
     }
 
+    private var isGlass: Bool {
+        appState.appearanceMode.isGlass
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             headerView
 
             Rectangle()
-                .fill(palette.hairline)
+                .fill(isGlass ? Color.primary.opacity(0.12) : palette.hairline)
                 .frame(height: 1)
 
             // Tab picker
@@ -54,7 +58,7 @@ struct SettingsView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .background(palette.panel)
+        .background(isGlass ? Color.clear : palette.panel)
     }
 
     private var headerView: some View {
@@ -113,13 +117,20 @@ struct SettingsSectionHeader: View {
     }
 }
 
-/// Hairline separator matching the dashboard.
+/// Hairline separator matching the dashboard. Over glass it becomes a
+/// tonal overlay so it never reads as a pasted opaque line.
 struct SettingsHairline: View {
+    var isGlass: Bool = false
+
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         Rectangle()
-            .fill(ColorTheme.palette(for: colorScheme).hairline)
+            .fill(
+                isGlass
+                    ? Color.primary.opacity(0.12)
+                    : ColorTheme.palette(for: colorScheme).hairline
+            )
             .frame(height: 1)
     }
 }

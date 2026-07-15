@@ -8,6 +8,7 @@ enum AppearanceMode: String, CaseIterable, Identifiable {
     case system
     case dark
     case light
+    case glass
 
     var id: String { rawValue }
 
@@ -16,17 +17,22 @@ enum AppearanceMode: String, CaseIterable, Identifiable {
         case .system: return "System"
         case .dark: return "Dark"
         case .light: return "Light"
+        case .glass: return "Glass"
         }
     }
 
     /// nil follows the system appearance.
     var nsAppearance: NSAppearance? {
         switch self {
-        case .system: return nil
+        case .system, .glass: return nil
         case .dark: return NSAppearance(named: .darkAqua)
         case .light: return NSAppearance(named: .aqua)
         }
     }
+
+    /// Glass keeps the popover's native translucent material
+    /// (Liquid Glass on macOS 26+) instead of the flat notebook panel.
+    var isGlass: Bool { self == .glass }
 }
 
 // MARK: - NotebookPalette

@@ -25,7 +25,7 @@ struct GeneralSettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            SettingsHairline()
+            SettingsHairline(isGlass: appState.appearanceMode.isGlass)
 
             // About
             VStack(alignment: .leading, spacing: 6) {
