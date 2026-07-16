@@ -42,7 +42,7 @@ struct DisplaySettingsView: View {
                 }
                 .pickerStyle(.menu)
 
-                Text("How often quota data is refreshed. Higher usage triggers more frequent checks automatically.")
+                Text("How often quota data is refreshed. Intervals below 2 minutes are not offered to stay within API rate limits.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

@@ -24,7 +24,7 @@ final class RefreshService {
         return formatter
     }()
 
-    var refreshInterval: TimeInterval = 120 // 2 minutes default
+    var refreshInterval: TimeInterval = RefreshInterval.default.rawValue
 
     func configure(onRefresh: @escaping () async -> Void) {
         self.onRefresh = onRefresh
@@ -36,7 +36,7 @@ final class RefreshService {
 
         refreshTask = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(self?.refreshInterval ?? 120))
+                try? await Task.sleep(for: .seconds(self?.refreshInterval ?? RefreshInterval.default.rawValue))
                 guard !Task.isCancelled else { break }
                 await self?.refresh()
             }
@@ -82,19 +82,27 @@ final class RefreshService {
     }
 }
 
-/// Available refresh interval options
+/// Available refresh interval options.
+/// Minimum is 2 minutes - anything faster tends to hit the usage API rate limit.
 enum RefreshInterval: Double, CaseIterable, Identifiable {
-    case oneMinute = 60
     case twoMinutes = 120
+    case threeMinutes = 180
+    case fourMinutes = 240
     case fiveMinutes = 300
     case manual = 0
+
+    static let `default`: RefreshInterval = .threeMinutes
+
+    /// Smallest selectable auto-refresh interval, in seconds.
+    static let minimumAutoSeconds: Double = RefreshInterval.twoMinutes.rawValue
 
     var id: Double { rawValue }
 
     var displayName: String {
         switch self {
-        case .oneMinute: return "1 minute"
         case .twoMinutes: return "2 minutes"
+        case .threeMinutes: return "3 minutes"
+        case .fourMinutes: return "4 minutes"
         case .fiveMinutes: return "5 minutes"
         case .manual: return "Manual only"
         }

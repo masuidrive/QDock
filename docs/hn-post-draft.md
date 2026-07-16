@@ -16,7 +16,7 @@ Then I open-sourced it and added a few security-focused constraints:
 - For Claude usage, QDock calls the usage endpoint only.
 - For Codex, QDock talks to `codex app-server` over local stdio JSON-RPC.
 - Installer verifies SHA-256 checksums and aborts if verification data is missing.
-- Auto-update pins installer package version and validates version format before running `npx`.
+- Auto-update downloads the release DMG straight from GitHub and verifies its SHA256 against the release's checksums.txt before installing.
 
 I am trying to keep this tool useful but also transparent about trust boundaries.
 **Current limitation:** releases are currently unsigned and not notarized (working on improving this release trust model).

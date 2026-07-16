@@ -114,11 +114,11 @@ final class AppState {
     @ObservationIgnored
     private var hasFinishedInitialization = false
     @ObservationIgnored
-    private var lastDynamicRefreshInterval: TimeInterval?
-    @ObservationIgnored
     private var lastMenuBarPresentation: MenuBarPresentation?
     @ObservationIgnored
     private var lastUpdateCheckDate: Date?
+    @ObservationIgnored
+    private var availableRelease: AppReleaseInfo?
 
     init(userDefaults: UserDefaults = .standard) {
         self.userDefaults = userDefaults
@@ -127,7 +127,11 @@ final class AppState {
         self.sessionWatcher = SessionFileWatcher()
         self.appUpdateService = AppUpdateService()
 
-        self.refreshIntervalSeconds = userDefaults.object(forKey: Keys.refreshIntervalSeconds) as? Double ?? 120
+        // Clamp legacy sub-2-minute choices (e.g. the removed "1 minute" option)
+        // to the new minimum; 0 stays as "Manual only".
+        let storedInterval = userDefaults.object(forKey: Keys.refreshIntervalSeconds) as? Double
+        self.refreshIntervalSeconds = storedInterval.map { $0 > 0 ? max($0, RefreshInterval.minimumAutoSeconds) : 0 }
+            ?? RefreshInterval.default.rawValue
         self.showPercentInMenuBar = userDefaults.object(forKey: Keys.showPercentInMenuBar) as? Bool ?? true
         self.menuBarUsageSourceRaw = userDefaults.string(forKey: Keys.menuBarUsageSource) ?? MenuBarUsageSource.highestUsage.rawValue
         self.menuBarProviderId = userDefaults.string(forKey: Keys.menuBarProviderId) ?? ""
@@ -139,7 +143,6 @@ final class AppState {
         providerManager.onStateChanged = { [weak self] in
             guard let self else { return }
             self.ensureMenuBarProviderSelection()
-            self.updateDynamicRefreshInterval()
             self.emitMenuBarPresentationIfNeeded()
             self.usageNotificationService.evaluate(self.providerManager.quotaByProvider)
         }
@@ -148,7 +151,6 @@ final class AppState {
             guard let self else { return }
             await self.providerManager.fetchAll()
             self.ensureMenuBarProviderSelection()
-            self.updateDynamicRefreshInterval()
             self.emitMenuBarPresentationIfNeeded()
         }
 
@@ -160,7 +162,6 @@ final class AppState {
             if let ccProvider = self.providerManager.claudeCodeProvider {
                 await self.providerManager.fetchQuota(for: ccProvider)
                 self.ensureMenuBarProviderSelection()
-                self.updateDynamicRefreshInterval()
                 self.emitMenuBarPresentationIfNeeded()
             }
         }
@@ -175,7 +176,6 @@ final class AppState {
     func initialLoad() async {
         await refreshService.refresh()
         ensureMenuBarProviderSelection()
-        updateDynamicRefreshInterval()
         emitMenuBarPresentationIfNeeded()
         await checkForUpdates()
     }
@@ -184,7 +184,6 @@ final class AppState {
     func manualRefresh() async {
         await refreshService.refresh()
         ensureMenuBarProviderSelection()
-        updateDynamicRefreshInterval()
         emitMenuBarPresentationIfNeeded()
         await checkForUpdates()
     }
@@ -192,7 +191,6 @@ final class AppState {
     func toggleProvider(_ providerId: String) {
         providerManager.toggleProvider(providerId)
         ensureMenuBarProviderSelection()
-        updateDynamicRefreshInterval()
         emitMenuBarPresentationIfNeeded()
     }
 
@@ -279,24 +277,6 @@ final class AppState {
         menuBarProviderId = providerManager.activeProviders.first?.id ?? ""
     }
 
-    // MARK: - Dynamic Refresh
-
-    /// Update refresh interval based on session usage level
-    func updateDynamicRefreshInterval() {
-        let percent = providerManager.maxSessionUsagePercent
-        let interval: TimeInterval
-        if percent >= 75 {
-            interval = 60   // High usage: every minute
-        } else if percent > 0 {
-            interval = 120  // Normal: every 2 minutes
-        } else {
-            interval = 300  // Idle: every 5 minutes
-        }
-        guard interval != lastDynamicRefreshInterval else { return }
-        lastDynamicRefreshInterval = interval
-        refreshService.updateInterval(interval)
-    }
-
     func emitMenuBarPresentationIfNeeded() {
         let presentation = menuBarPresentation
         guard presentation != lastMenuBarPresentation else { return }
@@ -334,12 +314,14 @@ final class AppState {
 
             if Self.isVersion(latestRelease.version, newerThan: currentAppVersion) {
                 let isNewDiscovery = availableUpdateVersion != latestRelease.version
+                availableRelease = latestRelease
                 availableUpdateVersion = latestRelease.version
                 availableUpdateURL = latestRelease.releaseURL
                 if isNewDiscovery {
                     postUpdateNotification(version: latestRelease.version)
                 }
             } else {
+                availableRelease = nil
                 availableUpdateVersion = nil
                 availableUpdateURL = nil
             }
@@ -351,7 +333,7 @@ final class AppState {
     }
 
     func installAvailableUpdate() async {
-        guard let version = availableUpdateVersion, !isInstallingUpdate else { return }
+        guard let release = availableRelease, !isInstallingUpdate else { return }
 
         isInstallingUpdate = true
         updateInstallError = nil
@@ -362,8 +344,9 @@ final class AppState {
         }
 
         do {
-            try await appUpdateService.installReleaseWithNpx(version: version)
-            installedUpdateVersion = version
+            try await appUpdateService.installRelease(release)
+            installedUpdateVersion = release.version
+            availableRelease = nil
             availableUpdateVersion = nil
             availableUpdateURL = nil
         } catch {

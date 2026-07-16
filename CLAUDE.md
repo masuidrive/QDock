@@ -40,7 +40,7 @@ No XCTest target exists. `swift build` is the required baseline check. For provi
 
 **Data model:** `QuotaData` contains `QuotaWindow[]` (session/weekly/model-specific windows). `UsageLevel` enum drives color coding: green (<50%), yellow (50-75%), orange (75-90%), red (90%+).
 
-**Refresh:** `RefreshService` uses dynamic intervals — 60s at high usage, 120s at moderate, 300s when idle. `SessionFileWatcher` monitors `~/.claude/projects/` for new session JSONL files.
+**Refresh:** `RefreshService` polls at a user-selected fixed interval (2-5 minutes, default 3, or manual-only; minimum 2 minutes to avoid API rate limits). `SessionFileWatcher` monitors `~/.claude/projects/` for new session JSONL files and triggers an immediate fetch.
 
 **Menu bar:** `AppDelegate.applyMenuBarPresentation` renders a progress circle icon with optional percentage text. Source can be highest-across-providers or a specific provider.
 

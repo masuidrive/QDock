@@ -256,7 +256,7 @@ struct DashboardView: View {
 
         return HStack {
             Spacer()
-            Text(interval > 0 ? "refreshing every \(interval)s" : "manual refresh")
+            Text(interval > 0 ? "refreshing every \(interval / 60)m" : "manual refresh")
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundStyle(palette.meta)
         }
