@@ -76,7 +76,13 @@ final class NetworkClient {
 
         guard (200...299).contains(httpResponse.statusCode) else {
             let body = String(data: data, encoding: .utf8) ?? "Unknown error"
-            throw NetworkError.httpError(statusCode: httpResponse.statusCode, body: body)
+            let retryAfter = (httpResponse.value(forHTTPHeaderField: "Retry-After"))
+                .flatMap(Double.init)
+            throw NetworkError.httpError(
+                statusCode: httpResponse.statusCode,
+                body: body,
+                retryAfterSeconds: retryAfter
+            )
         }
 
         do {
@@ -113,14 +119,14 @@ final class NetworkClient {
 
 enum NetworkError: LocalizedError {
     case invalidResponse
-    case httpError(statusCode: Int, body: String)
+    case httpError(statusCode: Int, body: String, retryAfterSeconds: Double? = nil)
     case decodingFailed(Error)
 
     var errorDescription: String? {
         switch self {
         case .invalidResponse:
             return "Invalid response from server"
-        case .httpError(let statusCode, let body):
+        case .httpError(let statusCode, let body, _):
             return "HTTP \(statusCode): \(body.prefix(200))"
         case .decodingFailed(let error):
             return "Failed to decode response: \(error.localizedDescription)"

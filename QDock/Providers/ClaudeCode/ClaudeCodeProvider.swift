@@ -86,7 +86,7 @@ final class ClaudeCodeProvider: QuotaProvider {
             }
             return quota
         } catch let error as NetworkError {
-            if case .httpError(let statusCode, _) = error {
+            if case .httpError(let statusCode, _, let retryAfterSeconds) = error {
                 // 401/403: expired token — refresh and retry
                 if statusCode == 401 || statusCode == 403 {
                     // A token without user:profile is rejected by the usage
@@ -114,7 +114,7 @@ final class ClaudeCodeProvider: QuotaProvider {
                     if let cached = withState({ cachedQuota }) {
                         return staleQuota(from: cached)
                     }
-                    throw ProviderError.rateLimited
+                    throw ProviderError.rateLimited(retryAfterSeconds: retryAfterSeconds)
                 }
             }
             // Other HTTP errors: return stale cache if available

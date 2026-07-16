@@ -16,9 +16,12 @@ final class ProviderManager {
     @ObservationIgnored
     private var fetchingProviders: Set<String> = []
     @ObservationIgnored
-    private var backoffByProvider: [String: Int] = [:]  // retry count for exponential backoff
+    private var rateLimitedUntil: [String: Date] = [:]
     @ObservationIgnored
-    private var backoffTasks: [String: Task<Void, Never>] = [:]
+    private var rateLimitRetryTasks: [String: Task<Void, Never>] = [:]
+
+    /// Cooldown applied on a 429 without a Retry-After header.
+    private static let defaultRateLimitCooldown: TimeInterval = 300
 
     /// Maximum usage percent across all providers
     var maxUsagePercent: Double {
@@ -125,6 +128,14 @@ final class ProviderManager {
 
         // Prevent duplicate concurrent fetches
         guard !fetchingProviders.contains(id) else { return }
+
+        // Honor the API's Retry-After: while cooling down, no request may
+        // go out from ANY trigger (timer, popover, watcher, buttons) -
+        // polling during the penalty window keeps extending it.
+        if let cooldownEnd = rateLimitedUntil[id], Date() < cooldownEnd {
+            return
+        }
+
         fetchingProviders.insert(id)
         defer { fetchingProviders.remove(id) }
 
@@ -155,20 +166,20 @@ final class ProviderManager {
             if shouldStoreQuota(quota, for: id) {
                 quotaByProvider[id] = quota
             }
-            // Reset backoff on success
-            backoffByProvider.removeValue(forKey: id)
+            // Clear any rate limit cooldown on success
+            rateLimitedUntil.removeValue(forKey: id)
         } catch is CancellationError {
             setErrorIfNeeded("Request cancelled", for: id)
         } catch {
-            // On rate limiting: don't show error if we have data, schedule backoff retry
-            if isRateLimitError(error) {
+            // On rate limiting: don't show error if we have data, go silent
+            // until the API's Retry-After expires, then retry once
+            if let retryAfter = rateLimitRetryAfter(from: error) {
                 if quotaByProvider[id] != nil {
-                    // Have data — silently keep it, don't show error
                     errorsByProvider.removeValue(forKey: id)
                 } else {
                     setErrorIfNeeded(error.localizedDescription, for: id)
                 }
-                scheduleBackoffRetry(for: provider)
+                beginRateLimitCooldown(for: provider, retryAfterSeconds: retryAfter)
             } else {
                 setErrorIfNeeded(error.localizedDescription, for: id)
                 if shouldClearQuota(for: error) {
@@ -236,26 +247,32 @@ final class ProviderManager {
             || existing.fetchedAt != newQuota.fetchedAt
     }
 
-    private func isRateLimitError(_ error: Error) -> Bool {
-        if let providerError = error as? ProviderError, case .rateLimited = providerError {
-            return true
+    /// The effective cooldown for a rate limit error, or nil if the error
+    /// is not a rate limit.
+    private func rateLimitRetryAfter(from error: Error) -> TimeInterval? {
+        guard let providerError = error as? ProviderError,
+              case .rateLimited(let retryAfterSeconds) = providerError else {
+            return nil
         }
-        return false
+        guard let seconds = retryAfterSeconds, seconds > 0 else {
+            return Self.defaultRateLimitCooldown
+        }
+        return seconds
     }
 
-    /// Exponential backoff retry: 30s, 60s, 120s, max 120s
-    private func scheduleBackoffRetry(for provider: any QuotaProvider) {
+    /// Block all requests for this provider until the cooldown expires,
+    /// then retry once (the regular timer takes over from there).
+    private func beginRateLimitCooldown(for provider: any QuotaProvider, retryAfterSeconds: TimeInterval) {
         let id = provider.id
-        backoffTasks[id]?.cancel()
+        rateLimitedUntil[id] = Date().addingTimeInterval(retryAfterSeconds)
 
-        let retryCount = backoffByProvider[id] ?? 0
-        let delay = min(30.0 * pow(2.0, Double(retryCount)), 120.0)
-        backoffByProvider[id] = retryCount + 1
-
-        backoffTasks[id] = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(delay))
-            guard !Task.isCancelled else { return }
-            await self?.fetchQuota(for: provider)
+        rateLimitRetryTasks[id]?.cancel()
+        rateLimitRetryTasks[id] = Task { [weak self] in
+            // Small buffer past the window so the retry lands cleanly after it
+            try? await Task.sleep(for: .seconds(retryAfterSeconds + 5))
+            guard !Task.isCancelled, let self else { return }
+            self.rateLimitedUntil.removeValue(forKey: id)
+            await self.fetchQuota(for: provider)
         }
     }
 

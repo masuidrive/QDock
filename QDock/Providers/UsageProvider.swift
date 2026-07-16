@@ -69,7 +69,7 @@ enum ProviderError: LocalizedError {
     case notInstalled
     case authRequired(String)
     case tokenExpired
-    case rateLimited
+    case rateLimited(retryAfterSeconds: Double? = nil)
     case networkError(Error)
     case apiError(String)
     case parseError(String)
@@ -84,7 +84,11 @@ enum ProviderError: LocalizedError {
             return message
         case .tokenExpired:
             return "Authentication token has expired. Please re-authenticate."
-        case .rateLimited:
+        case .rateLimited(let retryAfterSeconds):
+            if let seconds = retryAfterSeconds, seconds > 0 {
+                let minutes = max(1, Int((seconds / 60).rounded(.up)))
+                return "Rate limited by the API. Retrying in ~\(minutes)m."
+            }
             return "Rate limited. Please wait a moment and try again."
         case .networkError(let error):
             return "Network error: \(error.localizedDescription)"
