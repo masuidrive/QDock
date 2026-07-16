@@ -322,6 +322,7 @@ final class ClaudeCodeProvider: QuotaProvider {
     private func fetchFromAPI(token: String) async throws -> QuotaData {
         let url = URL(string: "https://api.anthropic.com/api/oauth/usage")!
 
+        AppLog.refresh.info("usage fetch, UA \(self.apiUserAgent(), privacy: .public)")
         let headers = [
             "Authorization": "Bearer \(token)",
             "Content-Type": "application/json",
