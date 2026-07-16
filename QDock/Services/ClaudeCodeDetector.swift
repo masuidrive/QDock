@@ -13,6 +13,9 @@ final class ClaudeCodeDetector {
     private var cliPathCacheDate: Date?
     private let cliPathCacheTTL: TimeInterval = 300 // 5 minutes
 
+    private var cachedCLIVersion: String?
+    private var hasResolvedCLIVersion = false
+
     /// Detection result with details about what was found
     struct DetectionResult {
         let isDetected: Bool
@@ -221,6 +224,72 @@ final class ClaudeCodeDetector {
     }
 
     // MARK: - Helpers
+
+    // MARK: - CLI Version
+
+    /// Version of the installed Claude Code CLI (e.g. "2.1.7"), or nil when
+    /// the CLI is missing or doesn't answer. Resolved once per app run:
+    /// spawning the node-based CLI is slow, and the version can't change
+    /// under a running app in a way we care about.
+    func cliVersion() -> String? {
+        lock.lock()
+        if hasResolvedCLIVersion {
+            let cached = cachedCLIVersion
+            lock.unlock()
+            return cached
+        }
+        lock.unlock()
+
+        let version = findCLIPath().flatMap(runCLIVersion(at:))
+
+        lock.lock()
+        cachedCLIVersion = version
+        hasResolvedCLIVersion = true
+        lock.unlock()
+        return version
+    }
+
+    private func runCLIVersion(at path: String) -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: path)
+        process.arguments = ["--version"]
+        let stdout = Pipe()
+        process.standardOutput = stdout
+        process.standardError = FileHandle.nullDevice
+
+        do {
+            try process.run()
+        } catch {
+            return nil
+        }
+
+        // The CLI is a node script; give it a bounded wait so a broken
+        // install can never wedge a fetch.
+        let deadline = Date().addingTimeInterval(5)
+        while process.isRunning && Date() < deadline {
+            usleep(50_000)
+        }
+        if process.isRunning {
+            process.terminate()
+            return nil
+        }
+
+        let output = String(
+            data: stdout.fileHandleForReading.readDataToEndOfFile(),
+            encoding: .utf8
+        ) ?? ""
+        return Self.parseCLIVersion(from: output)
+    }
+
+    /// Extracts the leading semver from CLI output like "2.1.7 (Claude Code)".
+    static func parseCLIVersion(from output: String) -> String? {
+        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let match = trimmed.range(
+            of: #"[0-9]+\.[0-9]+\.[0-9]+"#,
+            options: .regularExpression
+        ) else { return nil }
+        return String(trimmed[match])
+    }
 
     private func findCLIPath() -> String? {
         // Return cached CLI path if fresh

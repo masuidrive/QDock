@@ -38,6 +38,7 @@ final class RefreshService {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(self?.refreshInterval ?? RefreshInterval.default.rawValue))
                 guard !Task.isCancelled else { break }
+                AppLog.refresh.info("timer tick")
                 await self?.refresh()
             }
         }
@@ -53,8 +54,13 @@ final class RefreshService {
             let wedged = refreshStartedAt.map {
                 Date().timeIntervalSince($0) > Self.wedgedRefreshThreshold
             } ?? true
-            guard wedged else { return }
+            guard wedged else {
+                AppLog.refresh.info("refresh skipped: already in flight")
+                return
+            }
+            AppLog.refresh.warning("refresh proceeding past wedged in-flight refresh")
         }
+        AppLog.refresh.info("refresh start")
         isRefreshing = true
         refreshStartedAt = Date()
         error = nil
@@ -64,6 +70,7 @@ final class RefreshService {
         lastRefreshDate = Date()
         isRefreshing = false
         refreshStartedAt = nil
+        AppLog.refresh.info("refresh done")
     }
 
     func updateInterval(_ interval: TimeInterval) {

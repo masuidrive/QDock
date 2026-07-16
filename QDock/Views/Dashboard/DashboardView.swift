@@ -89,10 +89,14 @@ struct DashboardView: View {
 
             Spacer()
 
-            if let updated = updatedText {
-                Text(updated)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(palette.meta)
+            // TimelineView keeps the age ticking; without it the label only
+            // re-renders when state changes and freezes at "updated 0s ago"
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                if let updated = updatedText(now: context.date) {
+                    Text(updated)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(palette.meta)
+                }
             }
 
             RefreshButton(isRefreshing: appState.refreshService.isRefreshing) {
@@ -242,9 +246,13 @@ struct DashboardView: View {
     // MARK: - Refresh metadata (site-style compact strings)
 
     /// "updated 12s ago" like the site, instead of the wordy system formatter.
-    private var updatedText: String? {
-        guard let date = appState.refreshService.lastRefreshDate else { return nil }
-        let seconds = max(0, Int(Date().timeIntervalSince(date)))
+    /// When usage data last actually arrived (not when a refresh pass ran:
+    /// during a rate limit cooldown, passes complete without fetching, and
+    /// showing those as "updated" would be a lie).
+    private func updatedText(now: Date) -> String? {
+        let date = appState.providerManager.quotaByProvider.values.map(\.fetchedAt).max()
+        guard let date else { return nil }
+        let seconds = max(0, Int(now.timeIntervalSince(date)))
         if seconds < 60 { return "updated \(seconds)s ago" }
         let minutes = seconds / 60
         if minutes < 60 { return "updated \(minutes)m ago" }

@@ -4,7 +4,7 @@ import Foundation
 
 /// A single usage quota window (e.g., 5-hour session, 7-day weekly,
 /// or a model-scoped weekly limit like Fable)
-struct QuotaWindow: Identifiable, Equatable {
+struct QuotaWindow: Identifiable, Equatable, Codable {
     let id: String                      // "session", "weekly", "weekly-fable"
     let displayName: String             // "Session (5h)", "Weekly", "Fable Weekly"
     let usagePercent: Double            // 0.0 - 100.0
@@ -65,7 +65,7 @@ struct QuotaWindow: Identifiable, Equatable {
 
 /// "Usage credits" (formerly "extra usage") state for providers that
 /// support paid overage on top of plan limits.
-struct UsageCreditsInfo: Equatable {
+struct UsageCreditsInfo: Equatable, Codable {
     let usedCredits: Double?
     let monthlyLimit: Double?
     let utilization: Double?            // 0.0 - 100.0
@@ -75,7 +75,7 @@ struct UsageCreditsInfo: Equatable {
 // MARK: - QuotaData
 
 /// All quota data for a single provider
-struct QuotaData: Identifiable, Equatable {
+struct QuotaData: Identifiable, Equatable, Codable {
     let id: String                      // matches provider id
     let provider: String                // display name
     let planName: String?               // "Pro", "Max 5x", "Plus"

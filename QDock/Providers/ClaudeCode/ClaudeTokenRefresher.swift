@@ -18,7 +18,9 @@ struct ClaudeTokenRefresher {
     private static let clientID = "9d1c250a-e61b-44e4-8ed0-838d082f8424"
 
     /// Exchange a refresh token for a fresh access + refresh token pair.
-    func refresh(using refreshToken: String) async throws -> RefreshedTokens {
+    /// The token endpoint rate limits like the usage endpoint, so it gets
+    /// the same claude-code User-Agent.
+    func refresh(using refreshToken: String, userAgent: String) async throws -> RefreshedTokens {
         let url = URL(string: "https://console.anthropic.com/v1/oauth/token")!
 
         let formBody: [String: String] = [
@@ -29,6 +31,7 @@ struct ClaudeTokenRefresher {
 
         return try await NetworkClient.shared.post(
             url: url,
+            headers: ["User-Agent": userAgent],
             formBody: formBody,
             responseType: RefreshedTokens.self
         )

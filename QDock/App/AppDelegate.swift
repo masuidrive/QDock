@@ -113,6 +113,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
             // Refresh on open only when data is older than the user's
             // chosen interval (e.g. after machine sleep)
+            AppLog.refresh.info("popover opened")
             Task {
                 await appState.refreshIfStale()
             }

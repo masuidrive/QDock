@@ -292,7 +292,7 @@ final class ClaudeCodeProvider: QuotaProvider {
             planName: cached.planName,
             windows: cached.windows,
             accountEmail: cached.accountEmail,
-            fetchedAt: Date(),
+            fetchedAt: cached.fetchedAt,
             isStale: true
         )
     }
@@ -306,6 +306,18 @@ final class ClaudeCodeProvider: QuotaProvider {
 
     // MARK: - API
 
+    /// Version claimed when the local CLI can't be asked. Only the product
+    /// prefix appears to select the bucket, but send a plausible semver.
+    private static let fallbackCLIVersion = "2.0.0"
+
+    /// The oauth/usage endpoint buckets rate limits by User-Agent: anything
+    /// other than "claude-code/<version>" lands in an aggressively limited
+    /// bucket where even 5-minute polling draws escalating 429 penalties
+    /// (see anthropics/claude-code#31637, #30930).
+    private func apiUserAgent() -> String {
+        "claude-code/\(detector.cliVersion() ?? Self.fallbackCLIVersion)"
+    }
+
     /// Fetch quota from Claude API (same endpoint as claude-meter)
     private func fetchFromAPI(token: String) async throws -> QuotaData {
         let url = URL(string: "https://api.anthropic.com/api/oauth/usage")!
@@ -314,7 +326,7 @@ final class ClaudeCodeProvider: QuotaProvider {
             "Authorization": "Bearer \(token)",
             "Content-Type": "application/json",
             "Accept": "application/json",
-            "User-Agent": "QDock/1.0",
+            "User-Agent": apiUserAgent(),
             "anthropic-beta": "oauth-2025-04-20",
         ]
 
@@ -346,7 +358,7 @@ final class ClaudeCodeProvider: QuotaProvider {
         }
 
         do {
-            let tokens = try await tokenRefresher.refresh(using: refreshToken)
+            let tokens = try await tokenRefresher.refresh(using: refreshToken, userAgent: apiUserAgent())
             persistRefreshedTokens(tokens)
             return tokens.accessToken
         } catch {

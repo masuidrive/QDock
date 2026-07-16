@@ -156,6 +156,10 @@ final class AppState {
 
         refreshService.updateInterval(refreshIntervalSeconds)
 
+        // Seed the staleness gate from the persisted quota cache so a
+        // relaunch with fresh data doesn't fire a launch request.
+        refreshService.lastRefreshDate = providerManager.latestFetchedAt
+
         // Watch for Claude Code session file changes. This fires constantly
         // while Claude Code is in active use, so it must go through the
         // staleness gate - an unconditional fetch here hammers the API.
@@ -169,9 +173,10 @@ final class AppState {
         emitMenuBarPresentationIfNeeded()
     }
 
-    /// Initial data load
+    /// Initial data load. Fetches only when the persisted cache is older
+    /// than the refresh interval; a fresh cache makes launch free.
     func initialLoad() async {
-        await refreshService.refresh()
+        await refreshIfStale()
         ensureMenuBarProviderSelection()
         emitMenuBarPresentationIfNeeded()
         await checkForUpdates()
@@ -190,10 +195,16 @@ final class AppState {
     /// automatic requests never exceed the configured cadence; in Manual
     /// only mode it never fetches.
     func refreshIfStale() async {
+        let ageSeconds = refreshService.lastRefreshDate.map { Int(Date().timeIntervalSince($0)) } ?? -1
+        let intervalSeconds = Int(refreshIntervalSeconds)
         guard Self.isDataStale(
             lastRefresh: refreshService.lastRefreshDate,
             intervalSeconds: refreshIntervalSeconds
-        ) else { return }
+        ) else {
+            AppLog.refresh.info("passive trigger blocked: age \(ageSeconds)s < interval \(intervalSeconds)s")
+            return
+        }
+        AppLog.refresh.info("passive trigger passed: age \(ageSeconds)s >= interval \(intervalSeconds)s")
         await refreshService.refresh()
         ensureMenuBarProviderSelection()
         emitMenuBarPresentationIfNeeded()

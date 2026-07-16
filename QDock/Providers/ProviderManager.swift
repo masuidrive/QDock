@@ -6,7 +6,12 @@ import Observation
 @MainActor
 final class ProviderManager {
     var providers: [any QuotaProvider] = []
-    var quotaByProvider: [String: QuotaData] = [:]
+    var quotaByProvider: [String: QuotaData] = [:] {
+        didSet {
+            guard quotaByProvider != oldValue else { return }
+            persistQuotaCache()
+        }
+    }
     var errorsByProvider: [String: String] = [:]
     var loadingProviders: Set<String> = []
     @ObservationIgnored
@@ -16,12 +21,23 @@ final class ProviderManager {
     @ObservationIgnored
     private var fetchingProviders: Set<String> = []
     @ObservationIgnored
-    private var rateLimitedUntil: [String: Date] = [:]
+    private var rateLimitedUntil: [String: Date] = [:] {
+        didSet { persistRateLimitCooldowns() }
+    }
     @ObservationIgnored
     private var rateLimitRetryTasks: [String: Task<Void, Never>] = [:]
 
     /// Cooldown applied on a 429 without a Retry-After header.
     private static let defaultRateLimitCooldown: TimeInterval = 300
+    private static let rateLimitedUntilKey = "rateLimitedUntilByProvider"
+
+    /// Floor between two real fetches for the same provider, regardless of
+    /// trigger. Keeps the manual refresh button from producing bursts.
+    private static let minimumFetchSpacing: TimeInterval = 60
+    @ObservationIgnored
+    private var lastFetchStartedAt: [String: Date] = [:]
+
+    private static let cachedQuotaKey = "cachedQuotaByProvider"
 
     /// Maximum usage percent across all providers
     var maxUsagePercent: Double {
@@ -66,7 +82,15 @@ final class ProviderManager {
         }
     }
 
+    /// Most recent moment any provider's data actually arrived. Used to
+    /// gate the launch fetch: with fresh cached data there is nothing to ask.
+    var latestFetchedAt: Date? {
+        quotaByProvider.values.map(\.fetchedAt).max()
+    }
+
     init() {
+        loadPersistedRateLimitCooldowns()
+        loadPersistedQuotaCache()
         setupProviders()
     }
 
@@ -133,11 +157,28 @@ final class ProviderManager {
         // go out from ANY trigger (timer, popover, watcher, buttons) -
         // polling during the penalty window keeps extending it.
         if let cooldownEnd = rateLimitedUntil[id], Date() < cooldownEnd {
+            AppLog.refresh.info("fetch \(id, privacy: .public) skipped: rate limit cooldown, \(Int(cooldownEnd.timeIntervalSinceNow))s left")
+            // After a relaunch into a persisted cooldown there is no error
+            // set yet; surface the wait instead of an empty provider row.
+            if quotaByProvider[id] == nil, errorsByProvider[id] == nil {
+                setErrorIfNeeded(
+                    ProviderError.rateLimited(retryAfterSeconds: cooldownEnd.timeIntervalSinceNow).localizedDescription,
+                    for: id
+                )
+                notifyStateChanged()
+            }
+            return
+        }
+
+        if let lastStart = lastFetchStartedAt[id],
+           Date().timeIntervalSince(lastStart) < Self.minimumFetchSpacing {
+            AppLog.refresh.info("fetch \(id, privacy: .public) skipped: within \(Int(Self.minimumFetchSpacing))s spacing floor")
             return
         }
 
         fetchingProviders.insert(id)
         defer { fetchingProviders.remove(id) }
+        lastFetchStartedAt[id] = Date()
 
         // No pre-fetch refreshLocalState() here: providers refresh it inside
         // fetchQuota(), which runs under the 15s timeout race below. Anything
@@ -260,11 +301,49 @@ final class ProviderManager {
         return seconds
     }
 
+    /// Cooldowns survive relaunches: rate limit penalties escalate when
+    /// polled, and testing/updating the app must not restart the clock
+    /// with a doomed launch-time request.
+    private func loadPersistedRateLimitCooldowns() {
+        let stored = UserDefaults.standard.dictionary(forKey: Self.rateLimitedUntilKey) as? [String: Double] ?? [:]
+        let now = Date()
+        rateLimitedUntil = stored
+            .mapValues { Date(timeIntervalSince1970: $0) }
+            .filter { $0.value > now }
+    }
+
+    /// The quota cache survives relaunches so the UI has data instantly
+    /// and a launch doesn't need an API request while the data is fresh.
+    private func loadPersistedQuotaCache() {
+        guard let data = UserDefaults.standard.data(forKey: Self.cachedQuotaKey),
+              let cached = try? JSONDecoder().decode([String: QuotaData].self, from: data) else {
+            return
+        }
+        quotaByProvider = cached
+    }
+
+    private func persistQuotaCache() {
+        guard let data = try? JSONEncoder().encode(quotaByProvider) else { return }
+        UserDefaults.standard.set(data, forKey: Self.cachedQuotaKey)
+    }
+
+    private func persistRateLimitCooldowns() {
+        if rateLimitedUntil.isEmpty {
+            UserDefaults.standard.removeObject(forKey: Self.rateLimitedUntilKey)
+        } else {
+            UserDefaults.standard.set(
+                rateLimitedUntil.mapValues { $0.timeIntervalSince1970 },
+                forKey: Self.rateLimitedUntilKey
+            )
+        }
+    }
+
     /// Block all requests for this provider until the cooldown expires,
     /// then retry once (the regular timer takes over from there).
     private func beginRateLimitCooldown(for provider: any QuotaProvider, retryAfterSeconds: TimeInterval) {
         let id = provider.id
         rateLimitedUntil[id] = Date().addingTimeInterval(retryAfterSeconds)
+        AppLog.refresh.warning("rate limited: \(id, privacy: .public) cooling down for \(Int(retryAfterSeconds))s")
 
         rateLimitRetryTasks[id]?.cancel()
         rateLimitRetryTasks[id] = Task { [weak self] in
