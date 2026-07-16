@@ -90,27 +90,36 @@ final class RefreshService {
 }
 
 /// Available refresh interval options.
-/// Minimum is 2 minutes - anything faster tends to hit the usage API rate limit.
+/// Minimum is 3 minutes: the usage API tolerates ~180s polling at best, and
+/// Claude Code itself shares the same token's request budget, so anything
+/// faster risks escalating 429 penalties.
 enum RefreshInterval: Double, CaseIterable, Identifiable {
-    case twoMinutes = 120
     case threeMinutes = 180
-    case fourMinutes = 240
     case fiveMinutes = 300
+    case tenMinutes = 600
     case manual = 0
 
-    static let `default`: RefreshInterval = .threeMinutes
+    static let `default`: RefreshInterval = .fiveMinutes
 
     /// Smallest selectable auto-refresh interval, in seconds.
-    static let minimumAutoSeconds: Double = RefreshInterval.twoMinutes.rawValue
+    static let minimumAutoSeconds: Double = RefreshInterval.threeMinutes.rawValue
 
     var id: Double { rawValue }
 
+    /// Maps any previously stored value onto a currently offered option:
+    /// 0 stays Manual; anything else snaps up to the nearest allowed
+    /// interval so removed/faster options can never come back via defaults.
+    static func normalized(fromStored value: Double) -> Double {
+        guard value > 0 else { return manual.rawValue }
+        let autoOptions = allCases.map(\.rawValue).filter { $0 > 0 }.sorted()
+        return autoOptions.first { $0 >= value } ?? autoOptions.last ?? RefreshInterval.default.rawValue
+    }
+
     var displayName: String {
         switch self {
-        case .twoMinutes: return "2 minutes"
         case .threeMinutes: return "3 minutes"
-        case .fourMinutes: return "4 minutes"
         case .fiveMinutes: return "5 minutes"
+        case .tenMinutes: return "10 minutes"
         case .manual: return "Manual only"
         }
     }

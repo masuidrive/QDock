@@ -260,15 +260,26 @@ struct DashboardView: View {
     }
 
     private var refreshCadenceLine: some View {
-        let interval = Int(appState.refreshService.refreshInterval)
-
-        return HStack {
-            Spacer()
-            Text(interval > 0 ? "refreshing every \(interval / 60)m" : "manual refresh")
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundStyle(palette.meta)
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            HStack {
+                Spacer()
+                Text(cadenceText(now: context.date))
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(palette.meta)
+            }
         }
         .padding(.top, 10)
+    }
+
+    /// Honest cadence: during a rate limit cooldown say so, instead of
+    /// claiming a schedule no request is actually following.
+    private func cadenceText(now: Date) -> String {
+        if let cooldownEnd = appState.providerManager.activeRateLimitCooldownEnd(asOf: now) {
+            let minutes = max(1, Int((cooldownEnd.timeIntervalSince(now) / 60).rounded(.up)))
+            return "rate limited · retrying in \(minutes)m"
+        }
+        let interval = Int(appState.refreshService.refreshInterval)
+        return interval > 0 ? "refreshing every \(interval / 60)m" : "manual refresh"
     }
 
     // MARK: - Footer (app chrome, on a lifted surface for depth)

@@ -109,11 +109,12 @@ final class ClaudeCodeProvider: QuotaProvider {
                     return try returnStaleOrThrow(ProviderError.tokenExpired)
                 }
 
-                // 429: rate limited — DON'T refresh token
+                // 429: rate limited - DON'T refresh token. Never mask this
+                // with cached data: swallowing it here would keep the
+                // manager polling on schedule and re-arm the penalty
+                // forever. The manager keeps showing existing data and
+                // starts the cooldown.
                 if statusCode == 429 {
-                    if let cached = withState({ cachedQuota }) {
-                        return staleQuota(from: cached)
-                    }
                     throw ProviderError.rateLimited(retryAfterSeconds: retryAfterSeconds)
                 }
             }

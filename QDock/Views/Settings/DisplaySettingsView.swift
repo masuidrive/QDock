@@ -42,7 +42,7 @@ struct DisplaySettingsView: View {
                 }
                 .pickerStyle(.menu)
 
-                Text("How often quota data is refreshed. Intervals below 2 minutes are not offered to stay within API rate limits.")
+                Text("How often quota data is refreshed. Intervals below 3 minutes are not offered: the usage API rate limits aggressively, and Claude Code itself shares the same request budget.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

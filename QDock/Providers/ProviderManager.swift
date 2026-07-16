@@ -20,9 +20,15 @@ final class ProviderManager {
     private var providersRevision: UInt64 = 0
     @ObservationIgnored
     private var fetchingProviders: Set<String> = []
-    @ObservationIgnored
+    // Observable (not ignored) so the dashboard can surface active cooldowns
     private var rateLimitedUntil: [String: Date] = [:] {
         didSet { persistRateLimitCooldowns() }
+    }
+
+    /// End of the latest active rate limit cooldown across providers, if any.
+    /// The dashboard shows this instead of pretending the schedule is normal.
+    func activeRateLimitCooldownEnd(asOf now: Date = Date()) -> Date? {
+        rateLimitedUntil.values.filter { $0 > now }.max()
     }
     @ObservationIgnored
     private var rateLimitRetryTasks: [String: Task<Void, Never>] = [:]

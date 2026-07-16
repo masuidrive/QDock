@@ -40,7 +40,7 @@ No XCTest target exists. `swift build` is the required baseline check. For provi
 
 **Data model:** `QuotaData` contains `QuotaWindow[]` (session/weekly/model-specific windows). `UsageLevel` enum drives color coding: green (<50%), yellow (50-75%), orange (75-90%), red (90%+).
 
-**Refresh:** `RefreshService` polls at a user-selected fixed interval (2-5 minutes, default 3, or manual-only; minimum 2 minutes to avoid API rate limits). `SessionFileWatcher` monitors `~/.claude/projects/` for new session JSONL files and triggers an immediate fetch.
+**Refresh:** `RefreshService` polls at a user-selected fixed interval (3/5/10 minutes, default 5, or manual-only; minimum 3 minutes because the usage API rate limits aggressively and Claude Code shares the token's request budget). `SessionFileWatcher` monitors `~/.claude/projects/` and triggers a fetch only when data is older than the interval. On 429 the app honors Retry-After and blocks all requests for that provider until the window ends (cooldowns and the quota cache persist across launches).
 
 **Menu bar:** `AppDelegate.applyMenuBarPresentation` renders a progress circle icon with optional percentage text. Source can be highest-across-providers or a specific provider.
 

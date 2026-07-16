@@ -127,10 +127,10 @@ final class AppState {
         self.sessionWatcher = SessionFileWatcher()
         self.appUpdateService = AppUpdateService()
 
-        // Clamp legacy sub-2-minute choices (e.g. the removed "1 minute" option)
-        // to the new minimum; 0 stays as "Manual only".
+        // Snap legacy stored choices (removed 1/2/4-minute options) onto a
+        // currently offered interval; 0 stays as "Manual only".
         let storedInterval = userDefaults.object(forKey: Keys.refreshIntervalSeconds) as? Double
-        self.refreshIntervalSeconds = storedInterval.map { $0 > 0 ? max($0, RefreshInterval.minimumAutoSeconds) : 0 }
+        self.refreshIntervalSeconds = storedInterval.map(RefreshInterval.normalized(fromStored:))
             ?? RefreshInterval.default.rawValue
         self.showPercentInMenuBar = userDefaults.object(forKey: Keys.showPercentInMenuBar) as? Bool ?? true
         self.menuBarUsageSourceRaw = userDefaults.string(forKey: Keys.menuBarUsageSource) ?? MenuBarUsageSource.highestUsage.rawValue

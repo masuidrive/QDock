@@ -23,6 +23,15 @@ final class AppStateTests: XCTestCase {
         ))
     }
 
+    func testStoredIntervalSnapsToOfferedOptions() {
+        XCTAssertEqual(RefreshInterval.normalized(fromStored: 0), 0, "Manual stays manual")
+        XCTAssertEqual(RefreshInterval.normalized(fromStored: 60), 180, "Removed 1m snaps up to 3m")
+        XCTAssertEqual(RefreshInterval.normalized(fromStored: 120), 180, "Removed 2m snaps up to 3m")
+        XCTAssertEqual(RefreshInterval.normalized(fromStored: 240), 300, "Removed 4m snaps up to 5m")
+        XCTAssertEqual(RefreshInterval.normalized(fromStored: 300), 300, "Existing option kept")
+        XCTAssertEqual(RefreshInterval.normalized(fromStored: 9999), 600, "Above max snaps down to 10m")
+    }
+
     func testDataOlderThanIntervalIsStale() {
         XCTAssertTrue(AppState.isDataStale(
             lastRefresh: now.addingTimeInterval(-180), intervalSeconds: 180, now: now
