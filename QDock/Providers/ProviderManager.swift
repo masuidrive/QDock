@@ -41,16 +41,6 @@ final class ProviderManager {
         return providers.filter { $0.isEnabled && $0.isConfigured }
     }
 
-    /// The Claude Code provider
-    var claudeCodeProvider: ClaudeCodeProvider? {
-        providers.first { $0.id == "claude-code" } as? ClaudeCodeProvider
-    }
-
-    /// The Codex provider
-    var codexProvider: CodexProvider? {
-        providers.first { $0.id == "codex" } as? CodexProvider
-    }
-
     /// Earliest reset time across all providers
     var earliestReset: Date? {
         quotaByProvider.values.compactMap(\.earliestReset).min()

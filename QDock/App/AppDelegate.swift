@@ -111,9 +111,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             popover.contentViewController?.view.window?.makeKey()
             tintPopoverChrome()
 
-            // Refresh data when popover opens
+            // Refresh on open only when data is older than the user's
+            // chosen interval (e.g. after machine sleep)
             Task {
-                await appState.manualRefresh()
+                await appState.refreshIfStale()
             }
         }
     }

@@ -156,14 +156,11 @@ final class AppState {
 
         refreshService.updateInterval(refreshIntervalSeconds)
 
-        // Watch for Claude Code session file changes
+        // Watch for Claude Code session file changes. This fires constantly
+        // while Claude Code is in active use, so it must go through the
+        // staleness gate - an unconditional fetch here hammers the API.
         sessionWatcher.configure { [weak self] in
-            guard let self else { return }
-            if let ccProvider = self.providerManager.claudeCodeProvider {
-                await self.providerManager.fetchQuota(for: ccProvider)
-                self.ensureMenuBarProviderSelection()
-                self.emitMenuBarPresentationIfNeeded()
-            }
+            await self?.refreshIfStale()
         }
         sessionWatcher.startWatching()
 
@@ -186,6 +183,26 @@ final class AppState {
         ensureMenuBarProviderSelection()
         emitMenuBarPresentationIfNeeded()
         await checkForUpdates()
+    }
+
+    /// Passive refresh for popover opens and session file activity.
+    /// Fetches only when data is older than the user's chosen interval, so
+    /// automatic requests never exceed the configured cadence; in Manual
+    /// only mode it never fetches.
+    func refreshIfStale() async {
+        guard Self.isDataStale(
+            lastRefresh: refreshService.lastRefreshDate,
+            intervalSeconds: refreshIntervalSeconds
+        ) else { return }
+        await refreshService.refresh()
+        ensureMenuBarProviderSelection()
+        emitMenuBarPresentationIfNeeded()
+    }
+
+    nonisolated static func isDataStale(lastRefresh: Date?, intervalSeconds: Double, now: Date = Date()) -> Bool {
+        guard intervalSeconds > 0 else { return false }
+        guard let lastRefresh else { return true }
+        return now.timeIntervalSince(lastRefresh) >= intervalSeconds
     }
 
     func toggleProvider(_ providerId: String) {
