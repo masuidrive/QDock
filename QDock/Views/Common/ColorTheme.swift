@@ -67,7 +67,7 @@ struct NotebookPalette {
         case "claude-code":
             return isDark ? ColorTheme.usageOrange : ColorTheme.usageBarLight(80)
         case "codex":
-            return isDark ? ColorTheme.usageGreen : ColorTheme.usageBarLight(20)
+            return isDark ? Color.white.opacity(0.78) : Color.black.opacity(0.68)
         default:
             return section
         }
@@ -182,9 +182,9 @@ enum ColorTheme {
             case (.claude, false):
                 return NSColor(red: 0.702, green: 0.267, blue: 0.118, alpha: 1)
             case (.codex, true):
-                return NSColor(red: 0.482, green: 0.847, blue: 0.561, alpha: 1)
+                return NSColor.white.withAlphaComponent(0.78)
             case (.codex, false):
-                return NSColor(red: 0.180, green: 0.486, blue: 0.275, alpha: 1)
+                return NSColor.black.withAlphaComponent(0.68)
             }
         }
     }

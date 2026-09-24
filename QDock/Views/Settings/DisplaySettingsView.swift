@@ -53,7 +53,7 @@ struct DisplaySettingsView: View {
                     .toggleStyle(.switch)
                     .controlSize(.small)
 
-                Text("Claude and Codex session usage are shown together. Claude is orange; Codex is green.")
+                Text("Claude and Codex usage are shown together. Claude is orange; Codex is neutral gray.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
