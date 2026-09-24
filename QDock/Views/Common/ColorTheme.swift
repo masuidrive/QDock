@@ -65,7 +65,7 @@ struct NotebookPalette {
     func providerAccent(_ providerId: String) -> Color {
         switch providerId {
         case "claude-code":
-            return isDark ? ColorTheme.usageOrange : ColorTheme.usageBarLight(80)
+            return isDark ? ColorTheme.claudeProviderDark : ColorTheme.usageBarLight(80)
         case "codex":
             return isDark ? Color.white.opacity(0.78) : Color.black.opacity(0.68)
         default:
@@ -85,6 +85,7 @@ enum ColorTheme {
     static let usageYellow = Color(red: 0.973, green: 0.902, blue: 0.478)  // #F8E67A canary
     static let usageOrange = Color(red: 0.871, green: 0.365, blue: 0.200)  // #DE5D33 ember
     static let usageRed = Color(red: 0.988, green: 0.380, blue: 0.553)     // #FC618D hot pink
+    static let claudeProviderDark = Color(red: 1.000, green: 0.620, blue: 0.300) // #FF9E4D
 
     // MARK: Neutrals
 
@@ -178,7 +179,7 @@ enum ColorTheme {
             let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
             switch (provider, isDark) {
             case (.claude, true):
-                return NSColor(red: 0.871, green: 0.365, blue: 0.200, alpha: 1)
+                return NSColor(red: 1.000, green: 0.620, blue: 0.300, alpha: 1)
             case (.claude, false):
                 return NSColor(red: 0.702, green: 0.267, blue: 0.118, alpha: 1)
             case (.codex, true):
