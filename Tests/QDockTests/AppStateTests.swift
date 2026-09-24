@@ -41,6 +41,36 @@ final class AppStateTests: XCTestCase {
         ))
     }
 
+    func testInitialLoadRefreshesWhenAnActiveProviderHasNoCachedQuota() {
+        XCTAssertTrue(AppState.shouldRefreshOnInitialLoad(
+            lastRefresh: now.addingTimeInterval(-60),
+            intervalSeconds: 300,
+            activeProviderIDs: ["claude-code", "codex"],
+            cachedProviderIDs: ["codex"],
+            now: now
+        ))
+    }
+
+    func testInitialLoadKeepsFreshCompleteCache() {
+        XCTAssertFalse(AppState.shouldRefreshOnInitialLoad(
+            lastRefresh: now.addingTimeInterval(-60),
+            intervalSeconds: 300,
+            activeProviderIDs: ["claude-code", "codex"],
+            cachedProviderIDs: ["claude-code", "codex"],
+            now: now
+        ))
+    }
+
+    func testInitialLoadDoesNotAutoFetchMissingProviderInManualMode() {
+        XCTAssertFalse(AppState.shouldRefreshOnInitialLoad(
+            lastRefresh: now.addingTimeInterval(-60),
+            intervalSeconds: 0,
+            activeProviderIDs: ["claude-code", "codex"],
+            cachedProviderIDs: ["codex"],
+            now: now
+        ))
+    }
+
     func testMenuBarPresentationOrdersClaudeThenCodex() {
         let quotas = [
             "codex": makeQuota(id: "codex", provider: "Codex", percent: 19),

@@ -190,10 +190,19 @@ final class AppState {
         emitMenuBarPresentationIfNeeded()
     }
 
-    /// Initial data load. Fetches only when the persisted cache is older
-    /// than the refresh interval; a fresh cache makes launch free.
+    /// Initial data load. A fresh cache suppresses the launch request only
+    /// when every active provider is represented in that cache.
     func initialLoad() async {
-        await refreshIfStale()
+        let activeProviderIDs = Set(providerManager.activeProviders.map(\.id))
+        let cachedProviderIDs = Set(providerManager.quotaByProvider.keys)
+        if Self.shouldRefreshOnInitialLoad(
+            lastRefresh: refreshService.lastRefreshDate,
+            intervalSeconds: refreshIntervalSeconds,
+            activeProviderIDs: activeProviderIDs,
+            cachedProviderIDs: cachedProviderIDs
+        ) {
+            await refreshService.refresh()
+        }
         emitMenuBarPresentationIfNeeded()
         await checkForUpdates()
     }
@@ -228,6 +237,24 @@ final class AppState {
         guard intervalSeconds > 0 else { return false }
         guard let lastRefresh else { return true }
         return now.timeIntervalSince(lastRefresh) >= intervalSeconds
+    }
+
+    nonisolated static func shouldRefreshOnInitialLoad(
+        lastRefresh: Date?,
+        intervalSeconds: Double,
+        activeProviderIDs: Set<String>,
+        cachedProviderIDs: Set<String>,
+        now: Date = Date()
+    ) -> Bool {
+        guard intervalSeconds > 0 else { return false }
+        if !activeProviderIDs.isSubset(of: cachedProviderIDs) {
+            return true
+        }
+        return isDataStale(
+            lastRefresh: lastRefresh,
+            intervalSeconds: intervalSeconds,
+            now: now
+        )
     }
 
     func toggleProvider(_ providerId: String) {
