@@ -280,7 +280,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     lineWidth: 2,
                     percent: key.claudePercent,
                     timeProgressPercent: key.claudeTimeProgress,
-                    color: ColorTheme.nsColor(for: .claude)
+                    color: ColorTheme.nsColor(for: .claude),
+                    markerColor: ColorTheme.nsTimeProgressMarker(for: .claude)
                 )
                 Self.drawProgressRing(
                     center: center,
@@ -288,7 +289,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     lineWidth: 2,
                     percent: key.codexPercent,
                     timeProgressPercent: key.codexTimeProgress,
-                    color: ColorTheme.nsColor(for: .codex)
+                    color: ColorTheme.nsColor(for: .codex),
+                    markerColor: ColorTheme.nsTimeProgressMarker(for: .codex)
                 )
             } else if let usage = usages.first {
                 Self.drawProgressRing(
@@ -297,7 +299,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     lineWidth: 2.5,
                     percent: usage.percent,
                     timeProgressPercent: usage.timeProgress,
-                    color: ColorTheme.nsColor(for: usage.provider)
+                    color: ColorTheme.nsColor(for: usage.provider),
+                    markerColor: ColorTheme.nsTimeProgressMarker(for: usage.provider)
                 )
             } else {
                 Self.drawProgressRing(
@@ -306,7 +309,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     lineWidth: 2.5,
                     percent: nil,
                     timeProgressPercent: nil,
-                    color: .clear
+                    color: .clear,
+                    markerColor: .clear
                 )
             }
 
@@ -348,7 +352,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         lineWidth: CGFloat,
         percent: Int?,
         timeProgressPercent: Int?,
-        color: NSColor
+        color: NSColor,
+        markerColor: NSColor
     ) {
         let track = NSBezierPath(ovalIn: NSRect(
             x: center.x - radius,
@@ -389,7 +394,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             width: markerRadius * 2,
             height: markerRadius * 2
         ))
-        ColorTheme.nsTimeProgressMarker.setFill()
+        markerColor.setFill()
         marker.fill()
     }
 

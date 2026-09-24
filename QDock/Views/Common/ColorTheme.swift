@@ -190,11 +190,18 @@ enum ColorTheme {
         }
     }
 
-    static let nsTimeProgressMarker = NSColor(name: nil) { appearance in
-        let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        return isDark
-            ? NSColor(red: 0.482, green: 0.847, blue: 0.561, alpha: 1)
-            : NSColor(red: 0.180, green: 0.486, blue: 0.275, alpha: 1)
+    static func nsTimeProgressMarker(for provider: MenuBarProvider) -> NSColor {
+        NSColor(name: nil) { appearance in
+            let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            switch provider {
+            case .claude:
+                return isDark
+                    ? NSColor(red: 0.482, green: 0.847, blue: 0.561, alpha: 1)
+                    : NSColor(red: 0.180, green: 0.486, blue: 0.275, alpha: 1)
+            case .codex:
+                return NSColor(red: 0.137, green: 0.541, blue: 0.282, alpha: 1)
+            }
+        }
     }
 
     private static func nsUsageDark(_ percent: Double) -> NSColor {
