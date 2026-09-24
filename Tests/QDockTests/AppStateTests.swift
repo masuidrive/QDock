@@ -77,6 +77,60 @@ final class AppStateTests: XCTestCase {
         XCTAssertFalse(presentation.showsPercentText)
     }
 
+    func testMenuBarPresentationIncludesTimeProgressForDisplayedWindows() throws {
+        let reset = now.addingTimeInterval(6 * 24 * 60 * 60)
+        let quotas = [
+            "codex": QuotaData(
+                id: "codex",
+                provider: "Codex",
+                planName: nil,
+                windows: [QuotaWindow(
+                    id: "session",
+                    displayName: "Week",
+                    usagePercent: 19,
+                    resetsAt: reset,
+                    windowDurationMinutes: 10_080
+                )],
+                accountEmail: nil,
+                fetchedAt: now,
+                isStale: false
+            ),
+            "claude-code": QuotaData(
+                id: "claude-code",
+                provider: "Claude",
+                planName: nil,
+                windows: [QuotaWindow(
+                    id: "weekly",
+                    displayName: "Week",
+                    usagePercent: 5,
+                    resetsAt: reset,
+                    windowDurationMinutes: 10_080
+                )],
+                accountEmail: nil,
+                fetchedAt: now,
+                isStale: false
+            ),
+        ]
+
+        let presentation = MenuBarPresentation.make(
+            quotaByProvider: quotas,
+            showsPercentText: true,
+            at: now
+        )
+
+        XCTAssertEqual(presentation.usages.count, 2)
+        XCTAssertEqual(
+            try XCTUnwrap(presentation.usages.first { $0.provider == .claude }?.timeProgressPercent),
+            100.0 / 7.0,
+            accuracy: 0.001
+        )
+        XCTAssertEqual(
+            try XCTUnwrap(presentation.usages.first { $0.provider == .codex }?.timeProgressPercent),
+            100.0 / 7.0,
+            accuracy: 0.001
+        )
+    }
+
     private func makeQuota(
         id: String,
         provider: String,

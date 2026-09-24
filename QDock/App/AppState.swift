@@ -18,9 +18,14 @@ enum MenuBarProvider: String, CaseIterable {
 struct MenuBarUsage: Equatable, Hashable {
     let provider: MenuBarProvider
     let percent: Double
+    let timeProgressPercent: Double?
 
     var roundedPercent: Int {
         Int(percent.rounded(.down))
+    }
+
+    var roundedTimeProgressPercent: Int? {
+        timeProgressPercent.map { Int($0.rounded(.down)) }
     }
 }
 
@@ -30,19 +35,29 @@ struct MenuBarPresentation: Equatable {
 
     static func make(
         quotaByProvider: [String: QuotaData],
-        showsPercentText: Bool
+        showsPercentText: Bool,
+        at date: Date = Date()
     ) -> MenuBarPresentation {
         let usages = MenuBarProvider.allCases.compactMap { provider -> MenuBarUsage? in
             guard let quota = quotaByProvider[provider.rawValue] else { return nil }
-            let percent: Double
+            let window: QuotaWindow?
             switch provider {
             case .claude:
-                percent = quota.weeklyWindow?.usagePercent ?? quota.sessionUsagePercent
+                window = quota.weeklyWindow ?? quota.sessionWindow
             case .codex:
-                percent = quota.sessionUsagePercent
+                window = quota.sessionWindow
             }
+            let percent = window?.usagePercent ?? 0
             let clamped = percent.isFinite ? max(0, min(percent, 100)) : 0
-            return MenuBarUsage(provider: provider, percent: clamped)
+            let timeProgress = window?.timeProgressPercent(at: date)
+            let clampedTimeProgress = timeProgress.flatMap { progress in
+                progress.isFinite ? max(0, min(progress, 100)) : nil
+            }
+            return MenuBarUsage(
+                provider: provider,
+                percent: clamped,
+                timeProgressPercent: clampedTimeProgress
+            )
         }
         return MenuBarPresentation(usages: usages, showsPercentText: showsPercentText)
     }
