@@ -60,6 +60,18 @@ struct NotebookPalette {
     func usageText(_ percent: Double) -> Color {
         isDark ? ColorTheme.usageAccentDark(percent) : ColorTheme.usageTextLight(percent)
     }
+
+    /// Stable provider identity colors; these do not change with usage.
+    func providerAccent(_ providerId: String) -> Color {
+        switch providerId {
+        case "claude-code":
+            return isDark ? ColorTheme.usageOrange : ColorTheme.usageBarLight(80)
+        case "codex":
+            return isDark ? ColorTheme.usageGreen : ColorTheme.usageBarLight(20)
+        default:
+            return section
+        }
+    }
 }
 
 // MARK: - ColorTheme
@@ -158,6 +170,22 @@ enum ColorTheme {
         NSColor(name: nil) { appearance in
             let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
             return isDark ? nsUsageDark(percent) : nsUsageLight(percent)
+        }
+    }
+
+    static func nsColor(for provider: MenuBarProvider) -> NSColor {
+        NSColor(name: nil) { appearance in
+            let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            switch (provider, isDark) {
+            case (.claude, true):
+                return NSColor(red: 0.871, green: 0.365, blue: 0.200, alpha: 1)
+            case (.claude, false):
+                return NSColor(red: 0.702, green: 0.267, blue: 0.118, alpha: 1)
+            case (.codex, true):
+                return NSColor(red: 0.482, green: 0.847, blue: 0.561, alpha: 1)
+            case (.codex, false):
+                return NSColor(red: 0.180, green: 0.486, blue: 0.275, alpha: 1)
+            }
         }
     }
 

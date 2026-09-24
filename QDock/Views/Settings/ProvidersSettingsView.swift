@@ -393,7 +393,6 @@ struct ProviderSettingCard: View {
                refreshedProvider.isEnabled {
                 await appState.providerManager.fetchQuota(for: refreshedProvider)
             }
-            appState.ensureMenuBarProviderSelection()
             appState.emitMenuBarPresentationIfNeeded()
         }
     }

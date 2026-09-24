@@ -6,10 +6,6 @@ import Observation
 struct DisplaySettingsView: View {
     @Bindable var appState: AppState
 
-    private var menuBarUsageSource: MenuBarUsageSource {
-        MenuBarUsageSource(rawValue: appState.menuBarUsageSourceRaw) ?? .highestUsage
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             // Appearance
@@ -57,29 +53,7 @@ struct DisplaySettingsView: View {
                     .toggleStyle(.switch)
                     .controlSize(.small)
 
-                Picker("Usage source", selection: $appState.menuBarUsageSourceRaw) {
-                    ForEach(MenuBarUsageSource.allCases) { source in
-                        Text(source.displayName).tag(source.rawValue)
-                    }
-                }
-                .pickerStyle(.menu)
-
-                if menuBarUsageSource == .selectedProvider {
-                    if appState.availableMenuBarProviders.isEmpty {
-                        Text("Enable at least one detected provider to choose a menu bar source.")
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                    } else {
-                        Picker("Provider", selection: $appState.menuBarProviderId) {
-                            ForEach(appState.availableMenuBarProviders, id: \.id) { provider in
-                                Text(provider.name).tag(provider.id)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                    }
-                }
-
-                Text("Menu bar percent and icon color are based on session limits from the source selected above.")
+                Text("Claude and Codex session usage are shown together. Claude is orange; Codex is green.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -102,9 +76,6 @@ struct DisplaySettingsView: View {
             Spacer()
         }
         .padding(16)
-        .onAppear {
-            appState.ensureMenuBarProviderSelection()
-            appState.emitMenuBarPresentationIfNeeded()
-        }
+        .onAppear { appState.emitMenuBarPresentationIfNeeded() }
     }
 }

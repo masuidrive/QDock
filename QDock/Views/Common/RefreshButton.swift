@@ -15,6 +15,7 @@ struct RefreshButton: View {
                 .foregroundStyle(.secondary)
         }
         .buttonStyle(.plain)
+        .focusEffectDisabled()
         .disabled(isRefreshing)
         .onChange(of: isRefreshing) { _, newValue in
             if newValue {

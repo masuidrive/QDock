@@ -55,6 +55,21 @@ struct QuotaWindow: Identifiable, Equatable, Codable {
         }
     }
 
+    /// Percentage of the quota window that has elapsed at a given time.
+    /// Returns nil when the provider does not expose enough timing data.
+    func timeProgressPercent(at date: Date = Date()) -> Double? {
+        guard let resetsAt,
+              let windowDurationMinutes,
+              windowDurationMinutes > 0 else {
+            return nil
+        }
+
+        let duration = TimeInterval(windowDurationMinutes) * 60
+        let windowStart = resetsAt.addingTimeInterval(-duration)
+        let elapsed = date.timeIntervalSince(windowStart)
+        return max(0, min(elapsed / duration * 100, 100))
+    }
+
     /// Usage level for color coding (server severity can only escalate)
     var level: UsageLevel {
         UsageLevel.from(percent: usagePercent, severity: severity)

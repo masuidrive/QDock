@@ -11,7 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var eventMonitor: Any?
     private var screenParametersObserver: NSObjectProtocol?
     private var activeSpaceObserver: NSObjectProtocol?
-    private var menuBarIconCache: [Int: NSImage] = [:]
+    private var menuBarIconCache: [MenuBarImageKey: NSImage] = [:]
     private var singleInstanceLockFD: Int32 = -1
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -149,24 +149,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func applyMenuBarPresentation(_ presentation: MenuBarPresentation) {
         guard let button = statusItem.button else { return }
 
-        let clampedPercent = max(0, min(100, presentation.roundedPercent))
-        button.image = cachedProgressIcon(percent: clampedPercent)
-
-        if let text = presentation.text, !text.isEmpty {
-            let attributes: [NSAttributedString.Key: Any] = [
-                .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium),
-                .foregroundColor: ColorTheme.nsColorForUsage(presentation.percent),
-            ]
-            button.attributedTitle = NSAttributedString(string: " \(text)", attributes: attributes)
-
-            let textWidth = ceil((text as NSString).size(withAttributes: attributes).width)
-            // icon + gap + text + right breathing space
-            statusItem.length = ceil(18 + 3 + textWidth + 6)
-        } else {
-            button.attributedTitle = NSAttributedString(string: "")
-            button.title = ""
-            statusItem.length = 18
-        }
+        let image = cachedMenuBarImage(for: presentation)
+        button.imagePosition = .imageOnly
+        button.imageScaling = .scaleNone
+        button.image = image
+        button.attributedTitle = NSAttributedString(string: "")
+        button.title = ""
+        let usageSummary = presentation.usages
+            .map { "\($0.provider.displayName) \($0.roundedPercent)%" }
+            .joined(separator: ", ")
+        let accessibilityLabel = usageSummary.isEmpty ? "QDock" : "QDock, \(usageSummary)"
+        button.toolTip = accessibilityLabel
+        button.setAccessibilityLabel(accessibilityLabel)
+        statusItem.length = image.size.width + 4
         button.needsDisplay = true
     }
 
@@ -225,53 +220,160 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Progress Icon
 
-    private func cachedProgressIcon(percent: Int) -> NSImage {
-        if let cached = menuBarIconCache[percent] {
+    private struct MenuBarImageKey: Hashable {
+        let claudePercent: Int?
+        let codexPercent: Int?
+        let showsPercentText: Bool
+    }
+
+    private func cachedMenuBarImage(for presentation: MenuBarPresentation) -> NSImage {
+        let key = MenuBarImageKey(
+            claudePercent: presentation.usages.first { $0.provider == .claude }?.roundedPercent,
+            codexPercent: presentation.usages.first { $0.provider == .codex }?.roundedPercent,
+            showsPercentText: presentation.showsPercentText
+        )
+        if let cached = menuBarIconCache[key] {
             return cached
         }
-        let image = createProgressIcon(percent: Double(percent))
-        menuBarIconCache[percent] = image
+
+        let image = createMenuBarImage(key: key)
+        menuBarIconCache[key] = image
         return image
     }
 
-    private func createProgressIcon(percent: Double) -> NSImage {
-        let size: CGFloat = 18
-        let lineWidth: CGFloat = 2.5
+    private func createMenuBarImage(key: MenuBarImageKey) -> NSImage {
+        let iconSize: CGFloat = 18
+        let gap: CGFloat = 3
+        let usages: [(MenuBarProvider, Int)] = [
+            key.claudePercent.map { (.claude, $0) },
+            key.codexPercent.map { (.codex, $0) },
+        ].compactMap { $0 }
 
-        // Drawn via a handler so the dynamic usage color re-resolves for the
-        // menu bar's effective appearance (legible on light and dark bars).
-        let image = NSImage(size: NSSize(width: size, height: size), flipped: false) { _ in
-            let iconRect = NSRect(x: lineWidth / 2, y: lineWidth / 2,
-                                  width: size - lineWidth, height: size - lineWidth)
-            let center = NSPoint(x: size / 2, y: size / 2)
-            let radius = (size - lineWidth) / 2
+        let textFont = NSFont.monospacedDigitSystemFont(
+            ofSize: usages.count > 1 ? 8 : 11,
+            weight: .medium
+        )
+        let textWidth = usages.map { usage in
+            let text = "\(usage.1)%" as NSString
+            return ceil(text.size(withAttributes: [.font: textFont]).width)
+        }.max() ?? 0
+        let showsText = key.showsPercentText && !usages.isEmpty
+        let imageWidth = iconSize + (showsText ? gap + textWidth : 0)
 
-            let bgPath = NSBezierPath(ovalIn: iconRect)
-            bgPath.lineWidth = lineWidth
-            NSColor.systemGray.withAlphaComponent(0.3).setStroke()
-            bgPath.stroke()
+        let image = NSImage(size: NSSize(width: imageWidth, height: iconSize), flipped: false) { _ in
+            let center = NSPoint(x: iconSize / 2, y: iconSize / 2)
 
-            if percent > 0 {
-                let startAngle: CGFloat = 90
-                let endAngle: CGFloat = 90 - (360 * min(percent, 100) / 100)
-
-                let progressPath = NSBezierPath()
-                progressPath.appendArc(
-                    withCenter: center,
-                    radius: radius,
-                    startAngle: startAngle,
-                    endAngle: endAngle,
-                    clockwise: true
+            if usages.count > 1 {
+                Self.drawProgressRing(
+                    center: center,
+                    radius: 7,
+                    lineWidth: 2,
+                    percent: key.claudePercent,
+                    color: ColorTheme.nsColor(for: .claude)
                 )
-                progressPath.lineWidth = lineWidth
-                progressPath.lineCapStyle = .round
-                ColorTheme.nsColorForUsage(percent).setStroke()
-                progressPath.stroke()
+                Self.drawProgressRing(
+                    center: center,
+                    radius: 4.75,
+                    lineWidth: 2,
+                    percent: key.codexPercent,
+                    color: ColorTheme.nsColor(for: .codex)
+                )
+            } else if let usage = usages.first {
+                Self.drawProgressRing(
+                    center: center,
+                    radius: 7,
+                    lineWidth: 2.5,
+                    percent: usage.1,
+                    color: ColorTheme.nsColor(for: usage.0)
+                )
+            } else {
+                Self.drawProgressRing(
+                    center: center,
+                    radius: 7,
+                    lineWidth: 2.5,
+                    percent: nil,
+                    color: .clear
+                )
+            }
+
+            guard showsText else { return true }
+            let textX = iconSize + gap
+            if usages.count > 1 {
+                Self.drawMenuBarText(
+                    "\(key.claudePercent ?? 0)%",
+                    provider: .claude,
+                    font: textFont,
+                    x: textX,
+                    y: 9
+                )
+                Self.drawMenuBarText(
+                    "\(key.codexPercent ?? 0)%",
+                    provider: .codex,
+                    font: textFont,
+                    x: textX,
+                    y: 0
+                )
+            } else if let usage = usages.first {
+                Self.drawMenuBarText(
+                    "\(usage.1)%",
+                    provider: usage.0,
+                    font: textFont,
+                    x: textX,
+                    y: 2.5
+                )
             }
             return true
         }
         image.isTemplate = false
         return image
+    }
+
+    private static func drawProgressRing(
+        center: NSPoint,
+        radius: CGFloat,
+        lineWidth: CGFloat,
+        percent: Int?,
+        color: NSColor
+    ) {
+        let track = NSBezierPath(ovalIn: NSRect(
+            x: center.x - radius,
+            y: center.y - radius,
+            width: radius * 2,
+            height: radius * 2
+        ))
+        track.lineWidth = lineWidth
+        NSColor.systemGray.withAlphaComponent(0.3).setStroke()
+        track.stroke()
+
+        guard let percent, percent > 0 else { return }
+        let progress = NSBezierPath()
+        progress.appendArc(
+            withCenter: center,
+            radius: radius,
+            startAngle: 90,
+            endAngle: 90 - (360 * CGFloat(min(percent, 100)) / 100),
+            clockwise: true
+        )
+        progress.lineWidth = lineWidth
+        progress.lineCapStyle = .round
+        color.setStroke()
+        progress.stroke()
+    }
+
+    private static func drawMenuBarText(
+        _ text: String,
+        provider: MenuBarProvider,
+        font: NSFont,
+        x: CGFloat,
+        y: CGFloat
+    ) {
+        (text as NSString).draw(
+            at: NSPoint(x: x, y: y),
+            withAttributes: [
+                .font: font,
+                .foregroundColor: ColorTheme.nsColor(for: provider),
+            ]
+        )
     }
 
     func applicationWillTerminate(_ notification: Notification) {

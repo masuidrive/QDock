@@ -41,4 +41,76 @@ final class QuotaCacheTests: XCTestCase {
         XCTAssertEqual(ClaudeCodeDetector.parseCLIVersion(from: "claude v10.0.12"), "10.0.12")
         XCTAssertNil(ClaudeCodeDetector.parseCLIVersion(from: "command not found"))
     }
+
+    func testWindowTimeProgressIsOneSeventhAfterOneDay() throws {
+        let monday = Date(timeIntervalSince1970: 1_800_000_000)
+        let nextMonday = monday.addingTimeInterval(7 * 24 * 60 * 60)
+        let tuesday = monday.addingTimeInterval(24 * 60 * 60)
+        let window = QuotaWindow(
+            id: "weekly",
+            displayName: "Weekly",
+            usagePercent: 20,
+            resetsAt: nextMonday,
+            windowDurationMinutes: 7 * 24 * 60
+        )
+
+        XCTAssertEqual(
+            try XCTUnwrap(window.timeProgressPercent(at: tuesday)),
+            100.0 / 7.0,
+            accuracy: 0.000_001
+        )
+    }
+
+    func testWindowTimeProgressClampsToWindowBounds() throws {
+        let reset = Date(timeIntervalSince1970: 1_800_000_000)
+        let window = QuotaWindow(
+            id: "session",
+            displayName: "Session",
+            usagePercent: 20,
+            resetsAt: reset,
+            windowDurationMinutes: 300
+        )
+
+        XCTAssertEqual(
+            try XCTUnwrap(window.timeProgressPercent(at: reset.addingTimeInterval(-301 * 60))),
+            0
+        )
+        XCTAssertEqual(
+            try XCTUnwrap(window.timeProgressPercent(at: reset.addingTimeInterval(60))),
+            100
+        )
+    }
+
+    func testWindowTimeProgressRequiresResetAndPositiveDuration() {
+        let noReset = QuotaWindow(
+            id: "weekly",
+            displayName: "Weekly",
+            usagePercent: 20,
+            resetsAt: nil,
+            windowDurationMinutes: 10_080
+        )
+        let invalidDuration = QuotaWindow(
+            id: "weekly",
+            displayName: "Weekly",
+            usagePercent: 20,
+            resetsAt: Date(),
+            windowDurationMinutes: 0
+        )
+
+        XCTAssertNil(noReset.timeProgressPercent(at: Date()))
+        XCTAssertNil(invalidDuration.timeProgressPercent(at: Date()))
+    }
+
+    @MainActor
+    func testSevenDayWindowUsesWeekLabelEvenWhenProviderCallsItSession() {
+        let window = QuotaWindow(
+            id: "session",
+            displayName: "Session",
+            usagePercent: 20,
+            resetsAt: Date(),
+            windowDurationMinutes: 7 * 24 * 60
+        )
+
+        XCTAssertEqual(DashboardView.siteLabel(for: window), "Week")
+    }
 }

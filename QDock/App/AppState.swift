@@ -3,27 +3,49 @@ import SwiftUI
 import Observation
 import UserNotifications
 
-enum MenuBarUsageSource: String, CaseIterable, Identifiable {
-    case highestUsage = "highest-usage"
-    case selectedProvider = "selected-provider"
-
-    var id: String { rawValue }
+enum MenuBarProvider: String, CaseIterable {
+    case claude = "claude-code"
+    case codex
 
     var displayName: String {
         switch self {
-        case .highestUsage:
-            return "Highest Session Usage"
-        case .selectedProvider:
-            return "Specific Provider"
+        case .claude: return "Claude"
+        case .codex: return "Codex"
         }
     }
 }
 
-struct MenuBarPresentation: Equatable {
+struct MenuBarUsage: Equatable, Hashable {
+    let provider: MenuBarProvider
     let percent: Double
-    let roundedPercent: Int
-    let text: String?
-    let level: UsageLevel
+
+    var roundedPercent: Int {
+        Int(percent.rounded(.down))
+    }
+}
+
+struct MenuBarPresentation: Equatable {
+    let usages: [MenuBarUsage]
+    let showsPercentText: Bool
+
+    static func make(
+        quotaByProvider: [String: QuotaData],
+        showsPercentText: Bool
+    ) -> MenuBarPresentation {
+        let usages = MenuBarProvider.allCases.compactMap { provider -> MenuBarUsage? in
+            guard let quota = quotaByProvider[provider.rawValue] else { return nil }
+            let percent: Double
+            switch provider {
+            case .claude:
+                percent = quota.weeklyWindow?.usagePercent ?? quota.sessionUsagePercent
+            case .codex:
+                percent = quota.sessionUsagePercent
+            }
+            let clamped = percent.isFinite ? max(0, min(percent, 100)) : 0
+            return MenuBarUsage(provider: provider, percent: clamped)
+        }
+        return MenuBarPresentation(usages: usages, showsPercentText: showsPercentText)
+    }
 }
 
 /// Central application state managing providers, refresh, and navigation
@@ -56,21 +78,6 @@ final class AppState {
         didSet {
             guard hasFinishedInitialization, showPercentInMenuBar != oldValue else { return }
             userDefaults.set(showPercentInMenuBar, forKey: Keys.showPercentInMenuBar)
-            emitMenuBarPresentationIfNeeded()
-        }
-    }
-    var menuBarUsageSourceRaw: String {
-        didSet {
-            guard hasFinishedInitialization, menuBarUsageSourceRaw != oldValue else { return }
-            userDefaults.set(menuBarUsageSourceRaw, forKey: Keys.menuBarUsageSource)
-            ensureMenuBarProviderSelection()
-            emitMenuBarPresentationIfNeeded()
-        }
-    }
-    var menuBarProviderId: String {
-        didSet {
-            guard hasFinishedInitialization, menuBarProviderId != oldValue else { return }
-            userDefaults.set(menuBarProviderId, forKey: Keys.menuBarProviderId)
             emitMenuBarPresentationIfNeeded()
         }
     }
@@ -133,8 +140,6 @@ final class AppState {
         self.refreshIntervalSeconds = storedInterval.map(RefreshInterval.normalized(fromStored:))
             ?? RefreshInterval.default.rawValue
         self.showPercentInMenuBar = userDefaults.object(forKey: Keys.showPercentInMenuBar) as? Bool ?? true
-        self.menuBarUsageSourceRaw = userDefaults.string(forKey: Keys.menuBarUsageSource) ?? MenuBarUsageSource.highestUsage.rawValue
-        self.menuBarProviderId = userDefaults.string(forKey: Keys.menuBarProviderId) ?? ""
         self.launchAtLogin = userDefaults.object(forKey: Keys.launchAtLogin) as? Bool ?? false
         self.usageAlertsEnabled = userDefaults.object(forKey: Keys.usageAlertsEnabled) as? Bool ?? true
         self.appearanceModeRaw = userDefaults.string(forKey: Keys.appearanceMode) ?? AppearanceMode.system.rawValue
@@ -142,7 +147,6 @@ final class AppState {
 
         providerManager.onStateChanged = { [weak self] in
             guard let self else { return }
-            self.ensureMenuBarProviderSelection()
             self.emitMenuBarPresentationIfNeeded()
             self.usageNotificationService.evaluate(self.providerManager.quotaByProvider)
         }
@@ -150,7 +154,6 @@ final class AppState {
         refreshService.configure { [weak self] in
             guard let self else { return }
             await self.providerManager.fetchAll()
-            self.ensureMenuBarProviderSelection()
             self.emitMenuBarPresentationIfNeeded()
         }
 
@@ -168,7 +171,6 @@ final class AppState {
         }
         sessionWatcher.startWatching()
 
-        ensureMenuBarProviderSelection()
         hasFinishedInitialization = true
         emitMenuBarPresentationIfNeeded()
     }
@@ -177,7 +179,6 @@ final class AppState {
     /// than the refresh interval; a fresh cache makes launch free.
     func initialLoad() async {
         await refreshIfStale()
-        ensureMenuBarProviderSelection()
         emitMenuBarPresentationIfNeeded()
         await checkForUpdates()
     }
@@ -185,7 +186,6 @@ final class AppState {
     /// Manual refresh triggered by user
     func manualRefresh() async {
         await refreshService.refresh()
-        ensureMenuBarProviderSelection()
         emitMenuBarPresentationIfNeeded()
         await checkForUpdates()
     }
@@ -206,7 +206,6 @@ final class AppState {
         }
         AppLog.refresh.info("passive trigger passed: age \(ageSeconds)s >= interval \(intervalSeconds)s")
         await refreshService.refresh()
-        ensureMenuBarProviderSelection()
         emitMenuBarPresentationIfNeeded()
     }
 
@@ -218,91 +217,16 @@ final class AppState {
 
     func toggleProvider(_ providerId: String) {
         providerManager.toggleProvider(providerId)
-        ensureMenuBarProviderSelection()
         emitMenuBarPresentationIfNeeded()
     }
 
     // MARK: - Menu Bar
 
-    var menuBarUsageSource: MenuBarUsageSource {
-        get { MenuBarUsageSource(rawValue: menuBarUsageSourceRaw) ?? .highestUsage }
-        set { menuBarUsageSourceRaw = newValue.rawValue }
-    }
-
-    private var selectedMenuBarProvider: (any QuotaProvider)? {
-        let activeProviders = providerManager.activeProviders
-        guard !activeProviders.isEmpty else { return nil }
-
-        if let provider = activeProviders.first(where: { $0.id == menuBarProviderId }) {
-            return provider
-        }
-
-        return activeProviders.first
-    }
-
-    var menuBarPercent: Double {
-        switch menuBarUsageSource {
-        case .highestUsage:
-            return providerManager.maxSessionUsagePercent
-        case .selectedProvider:
-            guard let provider = selectedMenuBarProvider,
-                  let quota = providerManager.quotaByProvider[provider.id] else {
-                return 0
-            }
-            return quota.sessionUsagePercent
-        }
-    }
-
-    /// Menu bar display text — shows session usage percent
-    var menuBarText: String? {
-        guard showPercentInMenuBar else { return nil }
-
-        switch menuBarUsageSource {
-        case .highestUsage:
-            let percent = menuBarPercent
-            if percent > 0 {
-                return "\(Int(percent))%"
-            }
-            return nil
-        case .selectedProvider:
-            guard let provider = selectedMenuBarProvider,
-                  providerManager.quotaByProvider[provider.id] != nil else {
-                return nil
-            }
-            return "\(Int(menuBarPercent))%"
-        }
-    }
-
-    /// Menu bar usage level for coloring
-    var menuBarLevel: UsageLevel {
-        UsageLevel.from(percent: menuBarPercent)
-    }
-
     var menuBarPresentation: MenuBarPresentation {
-        let percent = menuBarPercent
-        return MenuBarPresentation(
-            percent: percent,
-            roundedPercent: Int(percent.rounded(.down)),
-            text: menuBarText,
-            level: UsageLevel.from(percent: percent)
+        MenuBarPresentation.make(
+            quotaByProvider: providerManager.quotaByProvider,
+            showsPercentText: showPercentInMenuBar
         )
-    }
-
-    var availableMenuBarProviders: [any QuotaProvider] {
-        providerManager.activeProviders
-    }
-
-    func ensureMenuBarProviderSelection() {
-        guard !providerManager.activeProviders.isEmpty else {
-            menuBarProviderId = ""
-            return
-        }
-
-        if providerManager.activeProviders.contains(where: { $0.id == menuBarProviderId }) {
-            return
-        }
-
-        menuBarProviderId = providerManager.activeProviders.first?.id ?? ""
     }
 
     func emitMenuBarPresentationIfNeeded() {
@@ -449,8 +373,6 @@ private extension AppState {
     enum Keys {
         static let refreshIntervalSeconds = "refreshIntervalSeconds"
         static let showPercentInMenuBar = "showPercentInMenuBar"
-        static let menuBarUsageSource = "menuBarUsageSource"
-        static let menuBarProviderId = "menuBarProviderId"
         static let launchAtLogin = "launchAtLogin"
         static let usageAlertsEnabled = "usageAlertsEnabled"
         static let appearanceMode = "appearanceMode"

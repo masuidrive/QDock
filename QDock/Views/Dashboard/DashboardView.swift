@@ -131,7 +131,9 @@ struct DashboardView: View {
                     usageRow(
                         label: Self.siteLabel(for: window),
                         reset: window.resetCountdown,
-                        percent: window.usagePercent
+                        percent: window.usagePercent,
+                        accentColor: palette.providerAccent(provider.id),
+                        window: window
                     )
                 }
 
@@ -139,7 +141,8 @@ struct DashboardView: View {
                     usageRow(
                         label: "Usage credits",
                         reset: nil,
-                        percent: utilization
+                        percent: utilization,
+                        accentColor: palette.providerAccent(provider.id)
                     )
                 }
             } else if let error = appState.providerManager.errorsByProvider[provider.id] {
@@ -165,7 +168,7 @@ struct DashboardView: View {
         HStack(spacing: 6) {
             Text(provider.name)
                 .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(palette.section)
+                .foregroundStyle(palette.providerAccent(provider.id))
 
             Spacer()
 
@@ -185,7 +188,13 @@ struct DashboardView: View {
 
     // MARK: - Usage row (label · bar · percent)
 
-    private func usageRow(label: String, reset: String?, percent: Double) -> some View {
+    private func usageRow(
+        label: String,
+        reset: String?,
+        percent: Double,
+        accentColor: Color,
+        window: QuotaWindow? = nil
+    ) -> some View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 1) {
                 Text(label)
@@ -201,15 +210,19 @@ struct DashboardView: View {
 
             Spacer(minLength: 8)
 
-            NotebookBarView(
-                percent: percent,
-                fill: palette.usageBar(percent),
-                track: palette.barTrack
-            )
+            TimelineView(.periodic(from: .now, by: 60)) { context in
+                NotebookBarView(
+                    percent: percent,
+                    timeProgressPercent: window?.timeProgressPercent(at: context.date),
+                    fill: accentColor,
+                    track: palette.barTrack,
+                    marker: palette.title
+                )
+            }
 
             Text("\(Int(percent.rounded()))%")
                 .font(.system(size: 12, design: .monospaced))
-                .foregroundStyle(palette.usageText(percent))
+                .foregroundStyle(accentColor)
                 .frame(width: 42, alignment: .trailing)
         }
         .padding(.vertical, 4)
@@ -219,6 +232,15 @@ struct DashboardView: View {
     /// ("Session (5h)" → "Session · 5h", "Opus Weekly" → "Week · Opus").
     static func siteLabel(for window: QuotaWindow) -> String {
         let name = window.displayName
+
+        // Codex can return a lone seven-day limit as `primary`; older
+        // cached data therefore identifies it as a session. Duration is
+        // authoritative here: 10,080 minutes is the same weekly window
+        // Claude labels as "Week".
+        if window.windowDurationMinutes == 7 * 24 * 60,
+           window.id == "session" || name == "Session" {
+            return "Week"
+        }
 
         let sessionIds: Set<String> = ["session", "five_hour"]
         if sessionIds.contains(window.id) || name.lowercased().hasPrefix("session") {
@@ -378,23 +400,46 @@ struct DashboardView: View {
 /// width animates in without distorting the rounded caps.
 struct NotebookBarView: View {
     let percent: Double
+    let timeProgressPercent: Double?
     let fill: Color
     let track: Color
+    let marker: Color
 
     @State private var displayedPercent: Double = 0
 
     private static let trackWidth: CGFloat = 96
 
+    private var markerOffset: CGFloat? {
+        guard let timeProgressPercent else { return nil }
+        let progress = CGFloat(max(0, min(timeProgressPercent, 100)) / 100)
+        return min(max(Self.trackWidth * progress - 1, 0), Self.trackWidth - 2)
+    }
+
     var body: some View {
         ZStack(alignment: .leading) {
             RoundedRectangle(cornerRadius: 2)
                 .fill(track)
+                .frame(height: 4)
 
             RoundedRectangle(cornerRadius: 2)
                 .fill(fill)
-                .frame(width: Self.trackWidth * CGFloat(max(0, min(displayedPercent, 100)) / 100))
+                .frame(
+                    width: Self.trackWidth * CGFloat(max(0, min(displayedPercent, 100)) / 100),
+                    height: 4
+                )
+
+            if let markerOffset {
+                Capsule()
+                    .fill(marker)
+                    .frame(width: 2, height: 8)
+                    .offset(x: markerOffset)
+            }
         }
-        .frame(width: Self.trackWidth, height: 4)
+        .frame(width: Self.trackWidth, height: 8)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Quota pace")
+        .accessibilityValue(accessibilityValue)
+        .help(accessibilityValue)
         .onAppear {
             withAnimation(.easeOut(duration: 0.9)) {
                 displayedPercent = percent
@@ -405,5 +450,14 @@ struct NotebookBarView: View {
                 displayedPercent = newValue
             }
         }
+        .animation(.easeInOut(duration: 0.3), value: timeProgressPercent)
+    }
+
+    private var accessibilityValue: String {
+        let usage = Int(percent.rounded())
+        guard let timeProgressPercent else {
+            return "\(usage) percent used"
+        }
+        return "\(usage) percent used, \(Int(timeProgressPercent.rounded())) percent of the period elapsed"
     }
 }

@@ -40,4 +40,76 @@ final class AppStateTests: XCTestCase {
             lastRefresh: now.addingTimeInterval(-3600), intervalSeconds: 180, now: now
         ))
     }
+
+    func testMenuBarPresentationOrdersClaudeThenCodex() {
+        let quotas = [
+            "codex": makeQuota(id: "codex", provider: "Codex", percent: 19),
+            "claude-code": makeQuota(
+                id: "claude-code",
+                provider: "Claude",
+                percent: 4,
+                weeklyPercent: 33
+            ),
+        ]
+
+        let presentation = MenuBarPresentation.make(
+            quotaByProvider: quotas,
+            showsPercentText: true
+        )
+
+        XCTAssertEqual(presentation.usages.map(\.provider), [.claude, .codex])
+        XCTAssertEqual(presentation.usages.map(\.roundedPercent), [33, 19])
+        XCTAssertTrue(presentation.showsPercentText)
+    }
+
+    func testMenuBarPresentationKeepsSingleAvailableProvider() throws {
+        let presentation = MenuBarPresentation.make(
+            quotaByProvider: [
+                "codex": makeQuota(id: "codex", provider: "Codex", percent: 19),
+            ],
+            showsPercentText: false
+        )
+
+        let usage = try XCTUnwrap(presentation.usages.first)
+        XCTAssertEqual(presentation.usages.count, 1)
+        XCTAssertEqual(usage.provider, .codex)
+        XCTAssertEqual(usage.roundedPercent, 19)
+        XCTAssertFalse(presentation.showsPercentText)
+    }
+
+    private func makeQuota(
+        id: String,
+        provider: String,
+        percent: Double,
+        weeklyPercent: Double? = nil
+    ) -> QuotaData {
+        var windows = [
+            QuotaWindow(
+                id: "session",
+                displayName: "Session",
+                usagePercent: percent,
+                resetsAt: nil,
+                windowDurationMinutes: 300
+            )
+        ]
+        if let weeklyPercent {
+            windows.append(QuotaWindow(
+                id: "weekly",
+                displayName: "Weekly",
+                usagePercent: weeklyPercent,
+                resetsAt: nil,
+                windowDurationMinutes: 10_080
+            ))
+        }
+
+        return QuotaData(
+            id: id,
+            provider: provider,
+            planName: nil,
+            windows: windows,
+            accountEmail: nil,
+            fetchedAt: now,
+            isStale: false
+        )
+    }
 }
