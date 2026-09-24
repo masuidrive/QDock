@@ -389,17 +389,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             width: markerRadius * 2,
             height: markerRadius * 2
         ))
-        let markerFill = NSColor(name: nil) { appearance in
-            let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            return isDark
-                ? NSColor.black.withAlphaComponent(0.85)
-                : NSColor.white.withAlphaComponent(0.9)
-        }
-        markerFill.setFill()
+        ColorTheme.nsTimeProgressMarker.setFill()
         marker.fill()
-        marker.lineWidth = 0.75
-        color.setStroke()
-        marker.stroke()
     }
 
     private static func drawMenuBarText(
