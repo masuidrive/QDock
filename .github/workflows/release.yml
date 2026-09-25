@@ -43,6 +43,12 @@ jobs:
       - name: Build universal app
         run: ./scripts/build_universal_app.sh "${{ steps.meta.outputs.version }}"
 
+      - name: Verify app signature and architectures
+        run: |
+          codesign --verify --deep --strict dist/QDock.app
+          test "$(lipo -archs dist/QDock.app/Contents/MacOS/QDock)" = "x86_64 arm64" || \
+            test "$(lipo -archs dist/QDock.app/Contents/MacOS/QDock)" = "arm64 x86_64"
+
       - name: Create DMG
         run: ./scripts/create_dmg.sh "${{ steps.meta.outputs.version }}"
 
@@ -56,6 +62,7 @@ jobs:
         with:
           draft: false
           prerelease: ${{ steps.meta.outputs.prerelease == 'true' }}
+          generate_release_notes: true
           files: |
             dist/${{ steps.meta.outputs.dmg_name }}
             dist/checksums.txt

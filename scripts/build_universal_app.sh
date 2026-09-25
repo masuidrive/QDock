@@ -53,4 +53,8 @@ PLIST_BUDDY="/usr/libexec/PlistBuddy"
 "$PLIST_BUDDY" -c "Set :CFBundleIconFile QDock.icns" "$CONTENTS_DIR/Info.plist" || \
   "$PLIST_BUDDY" -c "Add :CFBundleIconFile string QDock.icns" "$CONTENTS_DIR/Info.plist"
 
+echo "[build] Ad-hoc signing app bundle"
+codesign --force --deep --sign - "$APP_DIR"
+codesign --verify --deep --strict "$APP_DIR"
+
 echo "[build] Universal app bundle created at $APP_DIR"
