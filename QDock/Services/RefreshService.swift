@@ -26,6 +26,10 @@ final class RefreshService {
 
     var refreshInterval: TimeInterval = RefreshInterval.default.rawValue
 
+    var hasScheduledAutoRefresh: Bool {
+        refreshTask != nil
+    }
+
     func configure(onRefresh: @escaping () async -> Void) {
         self.onRefresh = onRefresh
     }
@@ -74,12 +78,16 @@ final class RefreshService {
     }
 
     func updateInterval(_ interval: TimeInterval) {
-        guard interval != refreshInterval else { return }
+        let intervalChanged = interval != refreshInterval
         refreshInterval = interval
-        if interval > 0 {
-            startAutoRefresh()
-        } else {
+
+        guard interval > 0 else {
             stopAutoRefresh()
+            return
+        }
+
+        if intervalChanged || refreshTask == nil {
+            startAutoRefresh()
         }
     }
 

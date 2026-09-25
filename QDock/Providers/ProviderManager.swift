@@ -229,7 +229,7 @@ final class ProviderManager {
                 beginRateLimitCooldown(for: provider, retryAfterSeconds: retryAfter)
             } else {
                 setErrorIfNeeded(error.localizedDescription, for: id)
-                if shouldClearQuota(for: error) {
+                if Self.shouldClearCachedQuota(for: error) {
                     quotaByProvider.removeValue(forKey: id)
                 }
             }
@@ -264,12 +264,12 @@ final class ProviderManager {
         errorsByProvider[providerId] = message
     }
 
-    private func shouldClearQuota(for error: Error) -> Bool {
+    nonisolated static func shouldClearCachedQuota(for error: Error) -> Bool {
         guard let providerError = error as? ProviderError else { return false }
         switch providerError {
-        case .notConfigured, .notInstalled, .authRequired, .tokenExpired:
+        case .notConfigured, .notInstalled:
             return true
-        case .rateLimited, .networkError, .apiError, .parseError:
+        case .authRequired, .tokenExpired, .rateLimited, .networkError, .apiError, .parseError:
             return false
         }
     }

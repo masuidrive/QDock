@@ -172,7 +172,8 @@ struct DashboardView: View {
 
             Spacer()
 
-            if quota?.isStale == true {
+            if quota?.isStale == true
+                || (quota != nil && appState.providerManager.errorsByProvider[provider.id] != nil) {
                 Text("cached")
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundStyle(palette.meta)
