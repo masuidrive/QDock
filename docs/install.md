@@ -31,11 +31,20 @@ QDOCK_REPO=masuidrive/QDock npx --yes @qdock/installer --dir "$HOME/Applications
 1. Open the [latest GitHub Release](https://github.com/masuidrive/QDock/releases/latest).
 2. Download `QDock-vX.Y.Z-mac-universal.dmg` and `checksums.txt`.
 3. Open the DMG and drag `QDock.app` to `Applications`.
-4. On first launch, Control-click `QDock.app`, choose **Open**, and confirm.
-5. In QDock, open **Settings > General** and enable **Launch at login** if desired.
+4. Try opening `QDock.app` once. macOS may block it because the release is not
+   Apple-notarized.
+5. Open **System Settings > Privacy & Security**, scroll to **Security**, click
+   **Open Anyway** next to QDock, authenticate, and confirm **Open**.
+6. In QDock, open **Settings > General** and enable **Launch at login** if desired.
 
-The release is ad-hoc signed but not Apple-notarized, so macOS may require the
-Control-click launch once on each machine.
+The release is ad-hoc signed but not Apple-notarized. Apple documents the
+**Open Anyway** flow in [Open apps safely on your Mac](https://support.apple.com/102445).
+Control-clicking **Open** alone may not override Gatekeeper on current macOS.
+
+If **Open Anyway** is unavailable, use the checksum-verified `npx` installation
+above. It downloads through Node.js instead of a browser and does not retain the
+browser-added quarantine attribute. On a managed Mac, an administrator policy
+may still prevent unnotarized apps from running.
 
 ## Verify Release Integrity
 
@@ -91,5 +100,5 @@ rm -rf ~/Applications/QDock.app
 
 - Installer reports `macOS only`: run on macOS 14+.
 - Installer cannot write `/Applications`: rerun with `--dir ~/Applications`.
-- Gatekeeper warning: Control-click QDock, choose `Open`, then allow it in `Privacy & Security` if prompted.
+- Gatekeeper warning: first try to open QDock, then use **System Settings > Privacy & Security > Open Anyway**. If that option is unavailable, use the `npx` installation method or contact the Mac administrator.
 - Claude is missing: run `claude auth status`, sign in with `claude auth login`, then refresh QDock.

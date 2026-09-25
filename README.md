@@ -33,8 +33,10 @@ Download the latest DMG from GitHub Releases:
 
 - [Latest Release](https://github.com/masuidrive/QDock/releases/latest)
 
-On first launch, Control-click QDock and choose **Open**. Releases are ad-hoc
-signed but not Apple-notarized.
+Releases are ad-hoc signed but not Apple-notarized. If macOS blocks the first
+launch, try opening QDock once, then go to **System Settings > Privacy &
+Security** and click **Open Anyway**. See the [installation guide](docs/install.md)
+for details and the checksum-verified CLI alternative.
 
 ### 3) Build from source
 

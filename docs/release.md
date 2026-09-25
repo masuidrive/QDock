@@ -40,7 +40,7 @@ This repository no longer runs a site deployment workflow.
 ## Important Notes (Current Setup)
 
 - Releases are ad-hoc signed but not Apple-notarized.
-- On first launch, macOS may block the app. Open with Control-click -> `Open`, then allow it in `Privacy & Security`.
+- On first launch, macOS may block the app. After attempting to open it, use **System Settings > Privacy & Security > Open Anyway**. Control-click alone is not a reliable Gatekeeper override on current macOS.
 
 ## Release Channels
 
