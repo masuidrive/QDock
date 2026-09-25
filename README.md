@@ -14,8 +14,11 @@ A native macOS menu bar app that shows AI coding quota usage in real time (curre
 ### 1) Command line (recommended)
 
 ```bash
-npx @qdock/installer
+QDOCK_REPO=masuidrive/QDock npx --yes @qdock/installer
 ```
+
+Requires macOS 14+ and Node.js 18+. The installer downloads this fork's latest
+DMG, verifies its checksum, copies QDock to `/Applications`, and launches it.
 
 Optional flags:
 
@@ -28,12 +31,15 @@ Optional flags:
 
 Download the latest DMG from GitHub Releases:
 
-- [Latest Release](https://github.com/altansaid/QDock/releases/latest)
+- [Latest Release](https://github.com/masuidrive/QDock/releases/latest)
+
+On first launch, Control-click QDock and choose **Open**. Releases are ad-hoc
+signed but not Apple-notarized.
 
 ### 3) Build from source
 
 ```bash
-git clone https://github.com/altansaid/QDock.git qdock
+git clone https://github.com/masuidrive/QDock.git qdock
 cd qdock
 swift build
 swift run QDock
@@ -59,8 +65,8 @@ Official website: [qdock.saidaltan.com](https://qdock.saidaltan.com/)
 
 ## Documentation
 
-- Install guide: `docs/install.md`
-- Maintainer release runbook: `docs/release.md`
+- [Install guide](docs/install.md)
+- [Maintainer release runbook](docs/release.md)
 
 ## Development
 

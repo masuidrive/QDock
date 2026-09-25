@@ -2,9 +2,10 @@
 
 This runbook describes how maintainers publish DMG releases and npm installer updates.
 
-## Required GitHub Secrets
+## Optional GitHub Secrets
 
-- `NPM_TOKEN`
+- `NPM_TOKEN` publishes `@qdock/installer`. The GitHub Release still succeeds
+  when this secret is absent because npm publishing is non-blocking.
 
 ## Release Steps
 
@@ -13,13 +14,15 @@ This runbook describes how maintainers publish DMG releases and npm installer up
 
 ```bash
 git tag v1.1.0
-git push origin v1.1.0
+git push fork v1.1.0
 ```
 
 3. `Release` workflow will:
 - build universal app (`arm64` + `x86_64`)
+- ad-hoc sign the app and verify the universal binary
 - generate `checksums.txt`
 - upload assets to GitHub Release
+- generate release notes from commits since the previous tag
 - publish `@qdock/installer` to npm
 
 4. Validate on a clean macOS machine:
@@ -36,7 +39,7 @@ This repository no longer runs a site deployment workflow.
 
 ## Important Notes (Current Setup)
 
-- Releases are currently unsigned and not notarized.
+- Releases are ad-hoc signed but not Apple-notarized.
 - On first launch, macOS may block the app. Open with Control-click -> `Open`, then allow it in `Privacy & Security`.
 
 ## Release Channels
