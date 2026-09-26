@@ -103,14 +103,34 @@ final class ClaudeKeychainReader {
             return nil
         }
 
-        if var oauth = root["claudeAiOauth"] as? [String: Any] {
-            guard oauth["refreshToken"] as? String == expectedRefreshToken else {
+        if root["claudeAiOauth"] is [String: Any] {
+            guard updateOAuthSection(
+                in: &root,
+                sectionKey: "claudeAiOauth",
+                accessKey: "accessToken",
+                refreshKey: "refreshToken",
+                expiryKey: "expiresAt",
+                replacingRefreshToken: expectedRefreshToken,
+                accessToken: accessToken,
+                refreshToken: refreshToken,
+                expiresAt: expiresAt
+            ) else {
                 return nil
             }
-            oauth["accessToken"] = accessToken
-            oauth["refreshToken"] = refreshToken
-            oauth["expiresAt"] = expiresAt
-            root["claudeAiOauth"] = oauth
+        } else if root["claude_ai_oauth"] is [String: Any] {
+            guard updateOAuthSection(
+                in: &root,
+                sectionKey: "claude_ai_oauth",
+                accessKey: "access_token",
+                refreshKey: "refresh_token",
+                expiryKey: "expires_at",
+                replacingRefreshToken: expectedRefreshToken,
+                accessToken: accessToken,
+                refreshToken: refreshToken,
+                expiresAt: expiresAt
+            ) else {
+                return nil
+            }
         } else {
             guard root["refreshToken"] as? String == expectedRefreshToken else {
                 return nil
@@ -121,6 +141,56 @@ final class ClaudeKeychainReader {
         }
 
         return try? JSONSerialization.data(withJSONObject: root, options: [.sortedKeys])
+    }
+
+    /// Update Claude Code's Keychain item without placing credentials in the
+    /// process argument list. The `security` tool reads the replacement value
+    /// twice from standard input, just as it would from an interactive prompt.
+    static func updateCredentials(
+        replacingRefreshToken expectedRefreshToken: String,
+        accessToken: String,
+        refreshToken: String,
+        expiresAt: Int64
+    ) -> Bool {
+        guard let existingData = readViaSecurityCLI(),
+              let updatedData = mergingRefreshedCredentials(
+                in: existingData,
+                replacingRefreshToken: expectedRefreshToken,
+                accessToken: accessToken,
+                refreshToken: refreshToken,
+                expiresAt: expiresAt
+              ),
+              writeViaSecurityCLI(updatedData)
+        else {
+            return false
+        }
+
+        clearCache()
+        return true
+    }
+
+    private static func updateOAuthSection(
+        in root: inout [String: Any],
+        sectionKey: String,
+        accessKey: String,
+        refreshKey: String,
+        expiryKey: String,
+        replacingRefreshToken expectedRefreshToken: String,
+        accessToken: String,
+        refreshToken: String,
+        expiresAt: Int64
+    ) -> Bool {
+        guard var oauth = root[sectionKey] as? [String: Any],
+              oauth[refreshKey] as? String == expectedRefreshToken
+        else {
+            return false
+        }
+
+        oauth[accessKey] = accessToken
+        oauth[refreshKey] = refreshToken
+        oauth[expiryKey] = expiresAt
+        root[sectionKey] = oauth
+        return true
     }
 
     // MARK: - Private: Shell-based Keychain Access
@@ -176,5 +246,52 @@ final class ClaudeKeychainReader {
         }
 
         return outputData
+    }
+
+    private static func writeViaSecurityCLI(_ credentialData: Data) -> Bool {
+        guard let credential = String(data: credentialData, encoding: .utf8),
+              !credential.contains("\n")
+        else {
+            return false
+        }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+        process.arguments = [
+            "add-generic-password",
+            "-U",
+            "-a", NSUserName(),
+            "-s", serviceName,
+            "-w",
+        ]
+
+        let inputPipe = Pipe()
+        process.standardInput = inputPipe
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+
+        do {
+            try process.run()
+            let promptInput = Data("\(credential)\n\(credential)\n".utf8)
+            try inputPipe.fileHandleForWriting.write(contentsOf: promptInput)
+            try inputPipe.fileHandleForWriting.close()
+        } catch {
+            if process.isRunning {
+                process.terminate()
+            }
+            return false
+        }
+
+        let semaphore = DispatchSemaphore(value: 0)
+        DispatchQueue.global(qos: .utility).async {
+            process.waitUntilExit()
+            semaphore.signal()
+        }
+
+        guard semaphore.wait(timeout: .now() + 3.0) == .success else {
+            process.terminate()
+            return false
+        }
+        return process.terminationStatus == 0
     }
 }

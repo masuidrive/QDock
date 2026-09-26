@@ -107,4 +107,38 @@ final class ClaudeCredentialRecoveryTests: XCTestCase {
 
         XCTAssertNil(updated, "Do not overwrite credentials rotated by another Claude process")
     }
+
+    func testRefreshedCredentialPreservesSnakeCaseFileShape() throws {
+        let existing = Data(
+            """
+            {
+              "claude_ai_oauth": {
+                "access_token": "old-access",
+                "refresh_token": "old-refresh",
+                "expires_at": 1,
+                "scopes": ["user:profile"]
+              }
+            }
+            """.utf8
+        )
+
+        let updated = try XCTUnwrap(
+            ClaudeKeychainReader.mergingRefreshedCredentials(
+                in: existing,
+                replacingRefreshToken: "old-refresh",
+                accessToken: "new-access",
+                refreshToken: "new-refresh",
+                expiresAt: 123456789
+            )
+        )
+        let json = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: updated) as? [String: Any]
+        )
+        let oauth = try XCTUnwrap(json["claude_ai_oauth"] as? [String: Any])
+
+        XCTAssertEqual(oauth["access_token"] as? String, "new-access")
+        XCTAssertEqual(oauth["refresh_token"] as? String, "new-refresh")
+        XCTAssertEqual(oauth["expires_at"] as? Int, 123456789)
+        XCTAssertNil(oauth["accessToken"], "Do not change the credential file's schema")
+    }
 }

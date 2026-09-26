@@ -3,6 +3,7 @@ import Foundation
 struct ClaudeResolvedAccessToken {
     let token: String
     let scopes: [String]?
+    let refreshToken: String?
 }
 
 enum ClaudeCredentialResolution {
@@ -25,14 +26,22 @@ struct ClaudeCredentialResolver {
                !oauth.isExpired,
                let token = nonEmpty(oauth.accessToken) {
                 return .accessToken(
-                    ClaudeResolvedAccessToken(token: token, scopes: oauth.scopes)
+                    ClaudeResolvedAccessToken(
+                        token: token,
+                        scopes: oauth.scopes,
+                        refreshToken: nonEmpty(oauth.refreshToken)
+                    )
                 )
             }
         }
 
         if let manualToken = nonEmpty(manualToken) {
             return .accessToken(
-                ClaudeResolvedAccessToken(token: manualToken, scopes: nil)
+                ClaudeResolvedAccessToken(
+                    token: manualToken,
+                    scopes: nil,
+                    refreshToken: nil
+                )
             )
         }
 

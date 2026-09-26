@@ -54,7 +54,7 @@ final class ClaudeCodeProvider: QuotaProvider {
         }
 
         let snapshot = withState { localState }
-        if let token = snapshot.accessToken, !token.isEmpty {
+        if snapshot.accessToken != nil || snapshot.refreshToken != nil {
             return .authenticated(email: snapshot.accountEmail)
         }
 
@@ -73,7 +73,14 @@ final class ClaudeCodeProvider: QuotaProvider {
             throw ProviderError.notInstalled
         }
 
-        guard let token = withState({ localState.accessToken }) else {
+        let initialState = withState { localState }
+        let token: String
+        if let accessToken = initialState.accessToken {
+            token = accessToken
+        } else if let refreshToken = initialState.refreshToken,
+                  let refreshedToken = await tryRefreshToken(using: refreshToken) {
+            token = refreshedToken
+        } else {
             throw ProviderError.authRequired(
                 "No access token found. Run `claude` in your terminal to authenticate."
             )
@@ -97,7 +104,8 @@ final class ClaudeCodeProvider: QuotaProvider {
                             "This token lacks the user:profile scope required for usage data. Run `claude /login` in your terminal to re-authenticate."
                         )
                     }
-                    if let newToken = await tryRefreshToken() {
+                    let refreshToken = withState { localState.refreshToken }
+                    if let newToken = await tryRefreshToken(using: refreshToken) {
                         do {
                             let quota = try await fetchFromAPI(token: newToken)
                             withState { cachedQuota = quota }
@@ -127,7 +135,10 @@ final class ClaudeCodeProvider: QuotaProvider {
 
     func validate() async throws -> Bool {
         await refreshLocalState()
-        return withState { localState.detectionResult.isDetected && localState.accessToken != nil }
+        return withState {
+            localState.detectionResult.isDetected
+                && (localState.accessToken != nil || localState.refreshToken != nil)
+        }
     }
 
     // MARK: - Account Info
@@ -154,7 +165,7 @@ final class ClaudeCodeProvider: QuotaProvider {
     }
 
     var isLoggedIn: Bool {
-        withState { localState.accessToken != nil }
+        withState { localState.accessToken != nil || localState.refreshToken != nil }
     }
 
     /// true when the active token is known to lack the `user:profile`
@@ -187,42 +198,24 @@ final class ClaudeCodeProvider: QuotaProvider {
 
     // MARK: - Auth Chain
 
-    private struct ResolvedToken {
-        let token: String
-        /// Scopes granted to this token, when the source records them.
-        /// nil = unknown (e.g. manually pasted tokens).
-        let scopes: [String]?
-    }
-
     /// Resolve access token using fallback chain:
     /// 1. ~/.claude/.credentials.json file (most up-to-date, CLI writes here on refresh)
     /// 2. Keychain (silent read, has expiry check)
     /// 3. Manual token (from settings onboarding, fallback)
-    private func resolveAccessTokenWithScopes() -> ResolvedToken? {
-        // 1. Credentials file — CLI always writes the freshest token here
-        if let oauth = readCredentialsFileOAuth(),
-           !oauth.isExpired,
-           let fileToken = oauth.accessToken {
-            return ResolvedToken(token: fileToken, scopes: oauth.scopes)
+    private func resolveCredential() -> ClaudeCredentialResolution {
+        var fallbackToken = withState { manualToken }
+        if fallbackToken == nil,
+           let saved = KeychainService.shared.get(key: "claude-token"),
+           !saved.isEmpty {
+            withState { manualToken = saved }
+            fallbackToken = saved
         }
 
-        // 2. Keychain (silent read — uses kSecUseAuthenticationUISkip, NEVER prompts)
-        if let keychainToken = ClaudeKeychainReader.accessToken {
-            return ResolvedToken(token: keychainToken, scopes: ClaudeKeychainReader.tokenScopes)
-        }
-
-        // 3. Manual/saved token (fallback from settings onboarding)
-        if let manual = withState({ manualToken }), !manual.isEmpty {
-            return ResolvedToken(token: manual, scopes: nil)
-        }
-        if let saved = KeychainService.shared.get(key: "claude-token"), !saved.isEmpty {
-            withState {
-                manualToken = saved
-            }
-            return ResolvedToken(token: saved, scopes: nil)
-        }
-
-        return nil
+        return ClaudeCredentialResolver.resolve(
+            fileOAuth: readCredentialsFileOAuth(),
+            keychainOAuth: ClaudeKeychainReader.readCredentials()?.claudeAiOauth,
+            manualToken: fallbackToken
+        )
     }
 
     private func refreshLocalStateSync(force: Bool = false) {
@@ -242,7 +235,20 @@ final class ClaudeCodeProvider: QuotaProvider {
         let globalConfig = readGlobalConfig()
         let credentialsOAuth = readCredentialsFileOAuth()
 
-        let resolved = resolveAccessTokenWithScopes()
+        let resolution = resolveCredential()
+        let resolved: ClaudeResolvedAccessToken?
+        let refreshToken: String?
+        switch resolution {
+        case .accessToken(let credential):
+            resolved = credential
+            refreshToken = credential.refreshToken
+        case .refreshRequired(let token):
+            resolved = nil
+            refreshToken = token
+        case .unavailable:
+            resolved = nil
+            refreshToken = nil
+        }
         let email = globalConfig?.oauthAccount?.emailAddress
         let subscription = globalConfig?.oauthAccount?.subscriptionType
             ?? credentialsOAuth?.subscriptionType
@@ -252,6 +258,7 @@ final class ClaudeCodeProvider: QuotaProvider {
             localState = ClaudeProviderLocalState(
                 detectionResult: detection,
                 accessToken: resolved?.token,
+                refreshToken: refreshToken,
                 tokenScopes: resolved?.scopes,
                 accountEmail: email,
                 subscriptionType: subscription,
@@ -349,19 +356,19 @@ final class ClaudeCodeProvider: QuotaProvider {
 
     /// Attempt to refresh the access token. Returns the new token on success, nil on failure.
     /// Serialized via `tokenRefreshLock` to prevent concurrent refresh attempts.
-    private func tryRefreshToken() async -> String? {
+    private func tryRefreshToken(using preferredRefreshToken: String? = nil) async -> String? {
         // Serialize: only one refresh at a time
         let acquired = claimRefreshSlot()
         guard acquired else { return nil }
         defer { releaseRefreshSlot() }
 
-        guard let refreshToken = resolveRefreshToken() else {
+        guard let refreshToken = preferredRefreshToken ?? resolveRefreshToken() else {
             return nil
         }
 
         do {
             let tokens = try await tokenRefresher.refresh(using: refreshToken, userAgent: apiUserAgent())
-            persistRefreshedTokens(tokens)
+            persistRefreshedTokens(tokens, replacingRefreshToken: refreshToken)
             return tokens.accessToken
         } catch {
             return nil
@@ -408,33 +415,41 @@ final class ClaudeCodeProvider: QuotaProvider {
         return nil
     }
 
-    /// Persist refreshed tokens to all stores so both QDock and Claude Code benefit.
-    private func persistRefreshedTokens(_ tokens: ClaudeTokenRefresher.RefreshedTokens) {
+    /// Persist refreshed tokens without exposing them in process arguments.
+    private func persistRefreshedTokens(
+        _ tokens: ClaudeTokenRefresher.RefreshedTokens,
+        replacingRefreshToken previousRefreshToken: String
+    ) {
         let expiresAtMs = Int64((Date().timeIntervalSince1970 + Double(tokens.expiresIn)) * 1000)
 
-        // 1. Write to ~/.claude/.credentials.json (atomic)
+        // 1. Update Claude Code's Keychain item while preserving newer fields.
+        _ = ClaudeKeychainReader.updateCredentials(
+            replacingRefreshToken: previousRefreshToken,
+            accessToken: tokens.accessToken,
+            refreshToken: tokens.refreshToken,
+            expiresAt: expiresAtMs
+        )
+
+        // 2. Update an existing fallback file, but never create a new plaintext
+        // credential file on a machine already using Keychain.
         let home = FileManager.default.homeDirectoryForCurrentUser
         let credPath = home.appendingPathComponent(".claude/.credentials.json")
-
-        // Read existing file to preserve other fields
-        var fileDict: [String: Any] = [:]
         if let existingData = try? Data(contentsOf: credPath),
-           let existing = try? JSONSerialization.jsonObject(with: existingData) as? [String: Any] {
-            fileDict = existing
+           let updatedData = ClaudeKeychainReader.mergingRefreshedCredentials(
+               in: existingData,
+               replacingRefreshToken: previousRefreshToken,
+               accessToken: tokens.accessToken,
+               refreshToken: tokens.refreshToken,
+               expiresAt: expiresAtMs
+           ) {
+            try? updatedData.write(to: credPath, options: .atomic)
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: 0o600],
+                ofItemAtPath: credPath.path
+            )
         }
 
-        // Update the oauth section
-        var oauthDict: [String: Any] = (fileDict["claude_ai_oauth"] as? [String: Any]) ?? [:]
-        oauthDict["access_token"] = tokens.accessToken
-        oauthDict["refresh_token"] = tokens.refreshToken
-        oauthDict["expires_at"] = expiresAtMs
-        fileDict["claude_ai_oauth"] = oauthDict
-
-        if let jsonData = try? JSONSerialization.data(withJSONObject: fileDict, options: [.prettyPrinted, .sortedKeys]) {
-            try? jsonData.write(to: credPath, options: .atomic)
-        }
-
-        // 2. Save to QDock Keychain
+        // 3. Keep a private fallback for QDock if the shared stores are unavailable.
         try? KeychainService.shared.save(key: "claude-token", value: tokens.accessToken)
         try? KeychainService.shared.save(key: "claude-refresh-token", value: tokens.refreshToken)
 
@@ -456,6 +471,7 @@ final class ClaudeCodeProvider: QuotaProvider {
 private struct ClaudeProviderLocalState {
     let detectionResult: ClaudeCodeDetector.DetectionResult
     let accessToken: String?
+    let refreshToken: String?
     let tokenScopes: [String]?
     let accountEmail: String?
     let subscriptionType: String?
@@ -472,6 +488,7 @@ private struct ClaudeProviderLocalState {
         ClaudeProviderLocalState(
             detectionResult: .notFound,
             accessToken: nil,
+            refreshToken: nil,
             tokenScopes: nil,
             accountEmail: nil,
             subscriptionType: nil,
