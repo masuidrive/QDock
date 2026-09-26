@@ -84,6 +84,45 @@ final class ClaudeKeychainReader {
         readCredentials()?.claudeAiOauth?.scopes
     }
 
+    /// Merge refreshed OAuth tokens into Claude Code's existing credential
+    /// payload while preserving fields introduced by newer CLI versions.
+    /// Returns nil when another process has already rotated the refresh token.
+    static func mergingRefreshedCredentials(
+        in existingData: Data,
+        replacingRefreshToken expectedRefreshToken: String,
+        accessToken: String,
+        refreshToken: String,
+        expiresAt: Int64
+    ) -> Data? {
+        guard !expectedRefreshToken.isEmpty,
+              !accessToken.isEmpty,
+              !refreshToken.isEmpty,
+              expiresAt > 0,
+              var root = try? JSONSerialization.jsonObject(with: existingData) as? [String: Any]
+        else {
+            return nil
+        }
+
+        if var oauth = root["claudeAiOauth"] as? [String: Any] {
+            guard oauth["refreshToken"] as? String == expectedRefreshToken else {
+                return nil
+            }
+            oauth["accessToken"] = accessToken
+            oauth["refreshToken"] = refreshToken
+            oauth["expiresAt"] = expiresAt
+            root["claudeAiOauth"] = oauth
+        } else {
+            guard root["refreshToken"] as? String == expectedRefreshToken else {
+                return nil
+            }
+            root["accessToken"] = accessToken
+            root["refreshToken"] = refreshToken
+            root["expiresAt"] = expiresAt
+        }
+
+        return try? JSONSerialization.data(withJSONObject: root, options: [.sortedKeys])
+    }
+
     // MARK: - Private: Shell-based Keychain Access
 
     /// Read credentials using `/usr/bin/security` CLI — NO password prompt.
