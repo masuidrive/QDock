@@ -158,8 +158,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let usageSummary = presentation.usages
             .map { usage in
                 let used = "\(usage.provider.displayName) \(usage.roundedPercent)% used"
-                guard let elapsed = usage.roundedTimeProgressPercent else { return used }
-                return "\(used), \(elapsed)% elapsed"
+                let freshness = usage.roundedTimeProgressPercent.map { ", \($0)% elapsed" } ?? ""
+                let authentication = usage.isAuthenticationDegraded ? ", authentication required" : ""
+                return used + freshness + authentication
             }
             .joined(separator: ", ")
         let accessibilityLabel = usageSummary.isEmpty ? "QDock" : "QDock, \(usageSummary)"
@@ -227,8 +228,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private struct MenuBarImageKey: Hashable {
         let claudePercent: Int?
         let claudeTimeProgress: Int?
+        let claudeAuthenticationDegraded: Bool
         let codexPercent: Int?
         let codexTimeProgress: Int?
+        let codexAuthenticationDegraded: Bool
         let showsPercentText: Bool
     }
 
@@ -237,9 +240,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             claudePercent: presentation.usages.first { $0.provider == .claude }?.roundedPercent,
             claudeTimeProgress: presentation.usages
                 .first { $0.provider == .claude }?.roundedTimeProgressPercent,
+            claudeAuthenticationDegraded: presentation.usages
+                .first { $0.provider == .claude }?.isAuthenticationDegraded ?? false,
             codexPercent: presentation.usages.first { $0.provider == .codex }?.roundedPercent,
             codexTimeProgress: presentation.usages
                 .first { $0.provider == .codex }?.roundedTimeProgressPercent,
+            codexAuthenticationDegraded: presentation.usages
+                .first { $0.provider == .codex }?.isAuthenticationDegraded ?? false,
             showsPercentText: presentation.showsPercentText
         )
         if let cached = menuBarIconCache[key] {
@@ -254,9 +261,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func createMenuBarImage(key: MenuBarImageKey) -> NSImage {
         let iconSize: CGFloat = 18
         let gap: CGFloat = 3
-        let usages: [(provider: MenuBarProvider, percent: Int, timeProgress: Int?)] = [
-            key.claudePercent.map { (.claude, $0, key.claudeTimeProgress) },
-            key.codexPercent.map { (.codex, $0, key.codexTimeProgress) },
+        let usages: [(
+            provider: MenuBarProvider,
+            percent: Int,
+            timeProgress: Int?,
+            authenticationDegraded: Bool
+        )] = [
+            key.claudePercent.map {
+                (.claude, $0, key.claudeTimeProgress, key.claudeAuthenticationDegraded)
+            },
+            key.codexPercent.map {
+                (.codex, $0, key.codexTimeProgress, key.codexAuthenticationDegraded)
+            },
         ].compactMap { $0 }
 
         let textFont = NSFont.monospacedDigitSystemFont(
@@ -280,8 +296,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     lineWidth: 2,
                     percent: key.claudePercent,
                     timeProgressPercent: key.claudeTimeProgress,
-                    color: ColorTheme.nsColor(for: .claude),
-                    markerColor: ColorTheme.nsTimeProgressMarker(for: .claude)
+                    color: Self.providerColor(.claude, degraded: key.claudeAuthenticationDegraded),
+                    markerColor: Self.markerColor(.claude, degraded: key.claudeAuthenticationDegraded)
                 )
                 Self.drawProgressRing(
                     center: center,
@@ -289,8 +305,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     lineWidth: 2,
                     percent: key.codexPercent,
                     timeProgressPercent: key.codexTimeProgress,
-                    color: ColorTheme.nsColor(for: .codex),
-                    markerColor: ColorTheme.nsTimeProgressMarker(for: .codex)
+                    color: Self.providerColor(.codex, degraded: key.codexAuthenticationDegraded),
+                    markerColor: Self.markerColor(.codex, degraded: key.codexAuthenticationDegraded)
                 )
             } else if let usage = usages.first {
                 Self.drawProgressRing(
@@ -299,8 +315,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     lineWidth: 2.5,
                     percent: usage.percent,
                     timeProgressPercent: usage.timeProgress,
-                    color: ColorTheme.nsColor(for: usage.provider),
-                    markerColor: ColorTheme.nsTimeProgressMarker(for: usage.provider)
+                    color: Self.providerColor(usage.provider, degraded: usage.authenticationDegraded),
+                    markerColor: Self.markerColor(usage.provider, degraded: usage.authenticationDegraded)
                 )
             } else {
                 Self.drawProgressRing(
@@ -322,14 +338,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     provider: .claude,
                     font: textFont,
                     x: textX,
-                    y: 9
+                    y: 9,
+                    degraded: key.claudeAuthenticationDegraded
                 )
                 Self.drawMenuBarText(
                     "\(key.codexPercent ?? 0)%",
                     provider: .codex,
                     font: textFont,
                     x: textX,
-                    y: 0
+                    y: 0,
+                    degraded: key.codexAuthenticationDegraded
                 )
             } else if let usage = usages.first {
                 Self.drawMenuBarText(
@@ -337,7 +355,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     provider: usage.provider,
                     font: textFont,
                     x: textX,
-                    y: 2.5
+                    y: 2.5,
+                    degraded: usage.authenticationDegraded
                 )
             }
             return true
@@ -403,15 +422,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         provider: MenuBarProvider,
         font: NSFont,
         x: CGFloat,
-        y: CGFloat
+        y: CGFloat,
+        degraded: Bool
     ) {
         (text as NSString).draw(
             at: NSPoint(x: x, y: y),
             withAttributes: [
                 .font: font,
-                .foregroundColor: ColorTheme.nsColor(for: provider),
+                .foregroundColor: providerColor(provider, degraded: degraded),
             ]
         )
+    }
+
+    private static func providerColor(_ provider: MenuBarProvider, degraded: Bool) -> NSColor {
+        ColorTheme.nsColor(for: provider).withAlphaComponent(degraded ? 0.35 : 1)
+    }
+
+    private static func markerColor(_ provider: MenuBarProvider, degraded: Bool) -> NSColor {
+        ColorTheme.nsTimeProgressMarker(for: provider).withAlphaComponent(degraded ? 0.35 : 1)
     }
 
     func applicationWillTerminate(_ notification: Notification) {

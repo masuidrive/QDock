@@ -19,6 +19,7 @@ struct MenuBarUsage: Equatable, Hashable {
     let provider: MenuBarProvider
     let percent: Double
     let timeProgressPercent: Double?
+    let isAuthenticationDegraded: Bool
 
     var roundedPercent: Int {
         Int(percent.rounded(.down))
@@ -36,6 +37,7 @@ struct MenuBarPresentation: Equatable {
     static func make(
         quotaByProvider: [String: QuotaData],
         showsPercentText: Bool,
+        authenticationIssueProviderIDs: Set<String> = [],
         at date: Date = Date()
     ) -> MenuBarPresentation {
         let usages = MenuBarProvider.allCases.compactMap { provider -> MenuBarUsage? in
@@ -56,7 +58,8 @@ struct MenuBarPresentation: Equatable {
             return MenuBarUsage(
                 provider: provider,
                 percent: clamped,
-                timeProgressPercent: clampedTimeProgress
+                timeProgressPercent: clampedTimeProgress,
+                isAuthenticationDegraded: authenticationIssueProviderIDs.contains(provider.rawValue)
             )
         }
         return MenuBarPresentation(usages: usages, showsPercentText: showsPercentText)
@@ -174,9 +177,9 @@ final class AppState {
 
         refreshService.updateInterval(refreshIntervalSeconds)
 
-        // Seed the staleness gate from the persisted quota cache so a
-        // relaunch with fresh data doesn't fire a launch request.
-        refreshService.lastRefreshDate = providerManager.latestFetchedAt
+        // Seed from the oldest active provider so fresh Codex data cannot
+        // suppress a needed Claude refresh (or vice versa) after relaunch.
+        refreshService.lastRefreshDate = providerManager.oldestActiveFetchedAt
 
         // Watch for Claude Code session file changes. This fires constantly
         // while Claude Code is in active use, so it must go through the
@@ -267,7 +270,8 @@ final class AppState {
     var menuBarPresentation: MenuBarPresentation {
         MenuBarPresentation.make(
             quotaByProvider: providerManager.quotaByProvider,
-            showsPercentText: showPercentInMenuBar
+            showsPercentText: showPercentInMenuBar,
+            authenticationIssueProviderIDs: providerManager.authenticationIssueProviderIDs
         )
     }
 

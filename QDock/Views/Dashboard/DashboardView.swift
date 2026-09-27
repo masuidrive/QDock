@@ -79,7 +79,7 @@ struct DashboardView: View {
         .background(panelFill)
     }
 
-    // MARK: - Header ("Usage" | updated · refresh · settings)
+    // MARK: - Header ("Usage" | refresh · settings)
 
     private var headerView: some View {
         HStack(spacing: 10) {
@@ -88,16 +88,6 @@ struct DashboardView: View {
                 .foregroundStyle(palette.title)
 
             Spacer()
-
-            // TimelineView keeps the age ticking; without it the label only
-            // re-renders when state changes and freezes at "updated 0s ago"
-            TimelineView(.periodic(from: .now, by: 1)) { context in
-                if let updated = updatedText(now: context.date) {
-                    Text(updated)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(palette.meta)
-                }
-            }
 
             RefreshButton(isRefreshing: appState.refreshService.isRefreshing) {
                 Task { await appState.manualRefresh() }
@@ -145,11 +135,8 @@ struct DashboardView: View {
                         accentColor: palette.providerAccent(provider.id)
                     )
                 }
-            } else if let error = appState.providerManager.errorsByProvider[provider.id] {
-                Text(error)
-                    .font(.system(size: 12))
-                    .foregroundStyle(palette.meta)
-                    .padding(.vertical, 4)
+            } else if appState.providerManager.authenticationIssueProviderIDs.contains(provider.id) {
+                EmptyView()
             } else if appState.providerManager.loadingProviders.contains(provider.id) {
                 Text("loading…")
                     .font(.system(size: 11, design: .monospaced))
@@ -160,6 +147,16 @@ struct DashboardView: View {
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(palette.meta)
                     .padding(.vertical, 4)
+            }
+
+            if appState.providerManager.authenticationIssueProviderIDs.contains(provider.id),
+               let message = appState.providerManager.errorsByProvider[provider.id] {
+                Label(message, systemImage: "exclamationmark.triangle.fill")
+                    .font(.system(size: 11))
+                    .foregroundStyle(palette.meta)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 5)
+                    .accessibilityLabel("Authentication required. \(message)")
             }
         }
     }
@@ -172,11 +169,12 @@ struct DashboardView: View {
 
             Spacer()
 
-            if quota?.isStale == true
-                || (quota != nil && appState.providerManager.errorsByProvider[provider.id] != nil) {
-                Text("cached")
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(palette.meta)
+            if let fetchedAt = quota?.fetchedAt {
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    Text(Self.updatedText(for: fetchedAt, now: context.date))
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(palette.meta)
+                }
             }
 
             if let plan = quota?.planName {
@@ -268,18 +266,16 @@ struct DashboardView: View {
 
     // MARK: - Refresh metadata (site-style compact strings)
 
-    /// "updated 12s ago" like the site, instead of the wordy system formatter.
-    /// When usage data last actually arrived (not when a refresh pass ran:
-    /// during a rate limit cooldown, passes complete without fetching, and
-    /// showing those as "updated" would be a lie).
-    private func updatedText(now: Date) -> String? {
-        let date = appState.providerManager.quotaByProvider.values.map(\.fetchedAt).max()
-        guard let date else { return nil }
+    /// Formats the successful fetch time paired with one provider's values.
+    /// A refresh attempt never changes this timestamp unless new data arrived.
+    static func updatedText(for date: Date, now: Date) -> String {
         let seconds = max(0, Int(now.timeIntervalSince(date)))
         if seconds < 60 { return "updated \(seconds)s ago" }
         let minutes = seconds / 60
         if minutes < 60 { return "updated \(minutes)m ago" }
-        return "updated \(minutes / 60)h ago"
+        let hours = minutes / 60
+        if hours < 24 { return "updated \(hours)h ago" }
+        return "updated \(hours / 24)d ago"
     }
 
     private var refreshCadenceLine: some View {

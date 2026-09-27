@@ -2,6 +2,22 @@ import XCTest
 @testable import QDock
 
 final class ProviderErrorTests: XCTestCase {
+    func testOnlyAuthenticationFailuresRequireUserAttention() {
+        XCTAssertTrue(ProviderManager.isAuthenticationError(
+            ProviderError.authRequired("login required")
+        ))
+        XCTAssertTrue(ProviderManager.isAuthenticationError(ProviderError.tokenExpired))
+        XCTAssertFalse(ProviderManager.isAuthenticationError(
+            ProviderError.networkError(URLError(.notConnectedToInternet))
+        ))
+        XCTAssertFalse(ProviderManager.isAuthenticationError(
+            ProviderError.apiError("temporarily unavailable")
+        ))
+        XCTAssertFalse(ProviderManager.isAuthenticationError(
+            ProviderError.rateLimited(retryAfterSeconds: 60)
+        ))
+    }
+
     func testAuthenticationFailuresKeepCachedQuotaVisible() {
         XCTAssertFalse(ProviderManager.shouldClearCachedQuota(for: ProviderError.authRequired("login required")))
         XCTAssertFalse(ProviderManager.shouldClearCachedQuota(for: ProviderError.tokenExpired))

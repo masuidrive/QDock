@@ -61,6 +61,37 @@ final class AppStateTests: XCTestCase {
         ))
     }
 
+    func testRefreshGateUsesOldestActiveProviderFetchTime() {
+        let quotas = [
+            "claude-code": QuotaData(
+                id: "claude-code",
+                provider: "Claude",
+                planName: nil,
+                windows: [],
+                accountEmail: nil,
+                fetchedAt: now.addingTimeInterval(-3_600),
+                isStale: true
+            ),
+            "codex": QuotaData(
+                id: "codex",
+                provider: "Codex",
+                planName: nil,
+                windows: [],
+                accountEmail: nil,
+                fetchedAt: now.addingTimeInterval(-60),
+                isStale: false
+            ),
+        ]
+
+        XCTAssertEqual(
+            ProviderManager.oldestFetchedAt(
+                in: quotas,
+                activeProviderIDs: ["claude-code", "codex"]
+            ),
+            now.addingTimeInterval(-3_600)
+        )
+    }
+
     func testInitialLoadDoesNotAutoFetchMissingProviderInManualMode() {
         XCTAssertFalse(AppState.shouldRefreshOnInitialLoad(
             lastRefresh: now.addingTimeInterval(-60),
@@ -158,6 +189,41 @@ final class AppStateTests: XCTestCase {
             try XCTUnwrap(presentation.usages.first { $0.provider == .codex }?.timeProgressPercent),
             100.0 / 7.0,
             accuracy: 0.001
+        )
+    }
+
+    func testMenuBarPresentationMarksOnlyProviderWithAuthenticationIssue() throws {
+        let quotas = [
+            "claude-code": makeQuota(id: "claude-code", provider: "Claude", percent: 40),
+            "codex": makeQuota(id: "codex", provider: "Codex", percent: 20),
+        ]
+
+        let presentation = MenuBarPresentation.make(
+            quotaByProvider: quotas,
+            showsPercentText: true,
+            authenticationIssueProviderIDs: ["claude-code"]
+        )
+
+        XCTAssertTrue(try XCTUnwrap(
+            presentation.usages.first { $0.provider == .claude }
+        ).isAuthenticationDegraded)
+        XCTAssertFalse(try XCTUnwrap(
+            presentation.usages.first { $0.provider == .codex }
+        ).isAuthenticationDegraded)
+    }
+
+    @MainActor
+    func testUpdatedTextUsesTheProvidersSuccessfulFetchTime() {
+        XCTAssertEqual(
+            DashboardView.updatedText(
+                for: now.addingTimeInterval(-(2 * 60 * 60 + 15 * 60)),
+                now: now
+            ),
+            "updated 2h ago"
+        )
+        XCTAssertEqual(
+            DashboardView.updatedText(for: now.addingTimeInterval(-90_000), now: now),
+            "updated 1d ago"
         )
     }
 

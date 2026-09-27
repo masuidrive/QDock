@@ -13,6 +13,7 @@ final class ProviderManager {
         }
     }
     var errorsByProvider: [String: String] = [:]
+    var authenticationIssueProviderIDs: Set<String> = []
     var loadingProviders: Set<String> = []
     @ObservationIgnored
     var onStateChanged: (() -> Void)?
@@ -88,10 +89,20 @@ final class ProviderManager {
         }
     }
 
-    /// Most recent moment any provider's data actually arrived. Used to
-    /// gate the launch fetch: with fresh cached data there is nothing to ask.
-    var latestFetchedAt: Date? {
-        quotaByProvider.values.map(\.fetchedAt).max()
+    /// Oldest successful fetch among active providers. One fresh provider
+    /// must not hide another provider whose reference values are much older.
+    var oldestActiveFetchedAt: Date? {
+        Self.oldestFetchedAt(
+            in: quotaByProvider,
+            activeProviderIDs: Set(activeProviders.map(\.id))
+        )
+    }
+
+    nonisolated static func oldestFetchedAt(
+        in quotas: [String: QuotaData],
+        activeProviderIDs: Set<String>
+    ) -> Date? {
+        activeProviderIDs.compactMap { quotas[$0]?.fetchedAt }.min()
     }
 
     init() {
@@ -164,15 +175,6 @@ final class ProviderManager {
         // polling during the penalty window keeps extending it.
         if let cooldownEnd = rateLimitedUntil[id], Date() < cooldownEnd {
             AppLog.refresh.info("fetch \(id, privacy: .public) skipped: rate limit cooldown, \(Int(cooldownEnd.timeIntervalSinceNow))s left")
-            // After a relaunch into a persisted cooldown there is no error
-            // set yet; surface the wait instead of an empty provider row.
-            if quotaByProvider[id] == nil, errorsByProvider[id] == nil {
-                setErrorIfNeeded(
-                    ProviderError.rateLimited(retryAfterSeconds: cooldownEnd.timeIntervalSinceNow).localizedDescription,
-                    for: id
-                )
-                notifyStateChanged()
-            }
             return
         }
 
@@ -193,10 +195,6 @@ final class ProviderManager {
         if !loadingProviders.contains(id) {
             loadingProviders.insert(id)
         }
-        if errorsByProvider[id] != nil {
-            errorsByProvider.removeValue(forKey: id)
-        }
-
         do {
             let quota = try await withThrowingTaskGroup(of: QuotaData.self) { group in
                 group.addTask {
@@ -215,20 +213,22 @@ final class ProviderManager {
             }
             // Clear any rate limit cooldown on success
             rateLimitedUntil.removeValue(forKey: id)
+            authenticationIssueProviderIDs.remove(id)
+            errorsByProvider.removeValue(forKey: id)
         } catch is CancellationError {
-            setErrorIfNeeded("Request cancelled", for: id)
+            // Keep the last successful values and timestamp. Cancellation
+            // does not require user action.
         } catch {
             // On rate limiting: don't show error if we have data, go silent
             // until the API's Retry-After expires, then retry once
             if let retryAfter = rateLimitRetryAfter(from: error) {
-                if quotaByProvider[id] != nil {
-                    errorsByProvider.removeValue(forKey: id)
-                } else {
-                    setErrorIfNeeded(error.localizedDescription, for: id)
-                }
                 beginRateLimitCooldown(for: provider, retryAfterSeconds: retryAfter)
-            } else {
+            } else if Self.isAuthenticationError(error) {
+                authenticationIssueProviderIDs.insert(id)
                 setErrorIfNeeded(error.localizedDescription, for: id)
+            } else {
+                // Connectivity and other transient retrieval failures are
+                // non-alarming. Keep the previous values and their fetchedAt.
                 if Self.shouldClearCachedQuota(for: error) {
                     quotaByProvider.removeValue(forKey: id)
                 }
@@ -255,6 +255,7 @@ final class ProviderManager {
         } else {
             quotaByProvider.removeValue(forKey: providerId)
             errorsByProvider.removeValue(forKey: providerId)
+            authenticationIssueProviderIDs.remove(providerId)
         }
         notifyStateChanged()
     }
@@ -274,6 +275,16 @@ final class ProviderManager {
         }
     }
 
+    nonisolated static func isAuthenticationError(_ error: Error) -> Bool {
+        guard let providerError = error as? ProviderError else { return false }
+        switch providerError {
+        case .authRequired, .tokenExpired:
+            return true
+        case .notConfigured, .notInstalled, .rateLimited, .networkError, .apiError, .parseError:
+            return false
+        }
+    }
+
     private func pruneInactiveProviderState() {
         let activeProviderIDs = Set(
             providers
@@ -283,6 +294,7 @@ final class ProviderManager {
 
         quotaByProvider = quotaByProvider.filter { activeProviderIDs.contains($0.key) }
         errorsByProvider = errorsByProvider.filter { activeProviderIDs.contains($0.key) }
+        authenticationIssueProviderIDs.formIntersection(activeProviderIDs)
     }
 
     private func shouldStoreQuota(_ newQuota: QuotaData, for providerId: String) -> Bool {
