@@ -27,12 +27,20 @@
 - Follow existing `// MARK:` organization and keep comments concise, factual.
 
 ## Testing Guidelines
-- There is currently no committed XCTest target; `swift build` is the required baseline check.
+- Run `swift test` for behavior changes and `swift build` as the baseline compile check.
 - For provider/auth changes, do manual validation:
   - missing-auth state in `Settings > Providers`
   - recovery flow after CLI login
   - menu bar usage update after refresh
 - For release/installer changes, validate install path using `docs/release.md` and `docs/install.md`.
+
+## Usage Freshness UX Contract
+- Usage values are directional reference data for understanding approximate consumption; drift of roughly one hour is acceptable.
+- Keep and display the last successfully fetched percentages when a later refresh fails.
+- Pair each provider's percentages with that provider's relative successful-fetch time (for example, `updated 2h ago`). Never present a refresh-attempt time as the data's update time.
+- Do not expose internal cache terminology such as `cached` in user-facing UI. The percentages and relative update time provide the freshness context the user needs.
+- Treat connectivity and other transient retrieval failures as non-alarming: retain the previous values and update time without showing an error.
+- Treat authentication failures separately: retain the previous values and update time, show an actionable message in the popover, and visually tone down only the affected provider's menu-bar ring and percentage.
 
 ## Commit & Pull Request Guidelines
 - Follow the existing conventional style seen in history: `feat:`, `fix:`, `docs:`, `chore:`, `refactor:`, `release:`, `security:`.
