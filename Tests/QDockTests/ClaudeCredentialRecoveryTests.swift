@@ -2,6 +2,17 @@ import XCTest
 @testable import QDock
 
 final class ClaudeCredentialRecoveryTests: XCTestCase {
+    func testTokenRefreshUsesCurrentClaudeCodeOAuthConfiguration() {
+        XCTAssertEqual(
+            ClaudeTokenRefresher.tokenURL.absoluteString,
+            "https://platform.claude.com/v1/oauth/token"
+        )
+        XCTAssertEqual(
+            ClaudeTokenRefresher.clientID,
+            "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+        )
+    }
+
     func testExpiredCredentialWithRefreshTokenCanRecover() {
         let oauth = ClaudeOAuthCredentials.OAuthData(
             accessToken: "expired-access",

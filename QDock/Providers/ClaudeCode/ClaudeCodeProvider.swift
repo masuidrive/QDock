@@ -77,9 +77,15 @@ final class ClaudeCodeProvider: QuotaProvider {
         let token: String
         if let accessToken = initialState.accessToken {
             token = accessToken
-        } else if let refreshToken = initialState.refreshToken,
-                  let refreshedToken = await tryRefreshToken(using: refreshToken) {
-            token = refreshedToken
+        } else if let refreshToken = initialState.refreshToken {
+            do {
+                guard let refreshedToken = try await refreshAccessToken(using: refreshToken) else {
+                    throw ProviderError.authRequired(Self.authenticationHelpMessage)
+                }
+                token = refreshedToken
+            } catch {
+                throw Self.classifyTokenRefreshFailure(error)
+            }
         } else {
             throw ProviderError.authRequired(
                 "No access token found. Run `claude` in your terminal to authenticate."
@@ -105,16 +111,16 @@ final class ClaudeCodeProvider: QuotaProvider {
                         )
                     }
                     let refreshToken = withState { localState.refreshToken }
-                    if let newToken = await tryRefreshToken(using: refreshToken) {
-                        do {
+                    do {
+                        if let newToken = try await refreshAccessToken(using: refreshToken) {
                             let quota = try await fetchFromAPI(token: newToken)
                             withState { cachedQuota = quota }
                             return quota
-                        } catch {
-                            // Retry failed — fall through to stale cache
                         }
+                    } catch {
+                        throw Self.classifyTokenRefreshFailure(error)
                     }
-                    return try returnStaleOrThrow(ProviderError.tokenExpired)
+                    throw ProviderError.authRequired(Self.authenticationHelpMessage)
                 }
 
                 // 429: rate limited - DON'T refresh token. Never mask this
@@ -354,9 +360,13 @@ final class ClaudeCodeProvider: QuotaProvider {
 
     // MARK: - Token Refresh
 
-    /// Attempt to refresh the access token. Returns the new token on success, nil on failure.
+    private static let authenticationHelpMessage =
+        "Claude authentication needs attention. Run `claude auth login` in Terminal."
+
+    /// Attempt to refresh the access token. Returns nil only when another
+    /// refresh already owns the serialization slot or no refresh token exists.
     /// Serialized via `tokenRefreshLock` to prevent concurrent refresh attempts.
-    private func tryRefreshToken(using preferredRefreshToken: String? = nil) async -> String? {
+    private func refreshAccessToken(using preferredRefreshToken: String? = nil) async throws -> String? {
         // Serialize: only one refresh at a time
         let acquired = claimRefreshSlot()
         guard acquired else { return nil }
@@ -366,13 +376,27 @@ final class ClaudeCodeProvider: QuotaProvider {
             return nil
         }
 
-        do {
-            let tokens = try await tokenRefresher.refresh(using: refreshToken, userAgent: apiUserAgent())
-            persistRefreshedTokens(tokens, replacingRefreshToken: refreshToken)
-            return tokens.accessToken
-        } catch {
-            return nil
+        let tokens = try await tokenRefresher.refresh(using: refreshToken, userAgent: apiUserAgent())
+        persistRefreshedTokens(tokens, replacingRefreshToken: refreshToken)
+        return tokens.accessToken
+    }
+
+    /// Invalid OAuth credentials need user action. Connectivity, server, and
+    /// throttling failures do not, so the manager can keep them non-alarming.
+    private static func classifyTokenRefreshFailure(_ error: Error) -> ProviderError {
+        if let providerError = error as? ProviderError {
+            return providerError
         }
+        if let networkError = error as? NetworkError,
+           case .httpError(let statusCode, _, let retryAfterSeconds) = networkError {
+            if statusCode == 400 || statusCode == 401 {
+                return .authRequired(authenticationHelpMessage)
+            }
+            if statusCode == 429 {
+                return .rateLimited(retryAfterSeconds: retryAfterSeconds)
+            }
+        }
+        return .networkError(error)
     }
 
     /// Try to claim the refresh slot. Returns true if this caller should proceed.
