@@ -79,7 +79,10 @@ final class ClaudeCodeProvider: QuotaProvider {
             token = accessToken
         } else if let refreshToken = initialState.refreshToken {
             do {
-                guard let refreshedToken = try await refreshAccessToken(using: refreshToken) else {
+                guard let refreshedToken = try await refreshAccessToken(
+                    using: refreshToken,
+                    scopes: initialState.tokenScopes
+                ) else {
                     throw ProviderError.authRequired(Self.authenticationHelpMessage)
                 }
                 token = refreshedToken
@@ -111,8 +114,12 @@ final class ClaudeCodeProvider: QuotaProvider {
                         )
                     }
                     let refreshToken = withState { localState.refreshToken }
+                    let tokenScopes = withState { localState.tokenScopes }
                     do {
-                        if let newToken = try await refreshAccessToken(using: refreshToken) {
+                        if let newToken = try await refreshAccessToken(
+                            using: refreshToken,
+                            scopes: tokenScopes
+                        ) {
                             let quota = try await fetchFromAPI(token: newToken)
                             withState { cachedQuota = quota }
                             return quota
@@ -244,16 +251,20 @@ final class ClaudeCodeProvider: QuotaProvider {
         let resolution = resolveCredential()
         let resolved: ClaudeResolvedAccessToken?
         let refreshToken: String?
+        let tokenScopes: [String]?
         switch resolution {
         case .accessToken(let credential):
             resolved = credential
             refreshToken = credential.refreshToken
-        case .refreshRequired(let token):
+            tokenScopes = credential.scopes
+        case .refreshRequired(let credential):
             resolved = nil
-            refreshToken = token
+            refreshToken = credential.refreshToken
+            tokenScopes = credential.scopes
         case .unavailable:
             resolved = nil
             refreshToken = nil
+            tokenScopes = nil
         }
         let email = globalConfig?.oauthAccount?.emailAddress
         let subscription = globalConfig?.oauthAccount?.subscriptionType
@@ -265,7 +276,7 @@ final class ClaudeCodeProvider: QuotaProvider {
                 detectionResult: detection,
                 accessToken: resolved?.token,
                 refreshToken: refreshToken,
-                tokenScopes: resolved?.scopes,
+                tokenScopes: tokenScopes,
                 accountEmail: email,
                 subscriptionType: subscription,
                 updatedAt: Date()
@@ -366,7 +377,10 @@ final class ClaudeCodeProvider: QuotaProvider {
     /// Attempt to refresh the access token. Returns nil only when another
     /// refresh already owns the serialization slot or no refresh token exists.
     /// Serialized via `tokenRefreshLock` to prevent concurrent refresh attempts.
-    private func refreshAccessToken(using preferredRefreshToken: String? = nil) async throws -> String? {
+    private func refreshAccessToken(
+        using preferredRefreshToken: String? = nil,
+        scopes: [String]? = nil
+    ) async throws -> String? {
         // Serialize: only one refresh at a time
         let acquired = claimRefreshSlot()
         guard acquired else { return nil }
@@ -376,7 +390,7 @@ final class ClaudeCodeProvider: QuotaProvider {
             return nil
         }
 
-        let tokens = try await tokenRefresher.refresh(using: refreshToken, userAgent: apiUserAgent())
+        let tokens = try await tokenRefresher.refresh(using: refreshToken, scopes: scopes)
         persistRefreshedTokens(tokens, replacingRefreshToken: refreshToken)
         return tokens.accessToken
     }

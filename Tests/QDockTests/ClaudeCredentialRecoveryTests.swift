@@ -13,6 +13,27 @@ final class ClaudeCredentialRecoveryTests: XCTestCase {
         )
     }
 
+    func testTokenRefreshRequestMatchesCurrentClaudeCodeWireFormat() throws {
+        let request = try ClaudeTokenRefresher.makeRequest(
+            refreshToken: "test-refresh-token",
+            scopes: ["user:profile", "user:inference"]
+        )
+
+        XCTAssertEqual(request.httpMethod, "POST")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/json")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Accept"), "application/json, text/plain, */*")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "User-Agent"), "axios/1.15.2")
+
+        let body = try XCTUnwrap(request.httpBody)
+        let json = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: body) as? [String: String]
+        )
+        XCTAssertEqual(json["grant_type"], "refresh_token")
+        XCTAssertEqual(json["refresh_token"], "test-refresh-token")
+        XCTAssertEqual(json["client_id"], ClaudeTokenRefresher.clientID)
+        XCTAssertEqual(json["scope"], "user:profile user:inference")
+    }
+
     func testExpiredCredentialWithRefreshTokenCanRecover() {
         let oauth = ClaudeOAuthCredentials.OAuthData(
             accessToken: "expired-access",
@@ -29,10 +50,11 @@ final class ClaudeCredentialRecoveryTests: XCTestCase {
             manualToken: nil
         )
 
-        guard case .refreshRequired(let refreshToken) = resolution else {
+        guard case .refreshRequired(let credential) = resolution else {
             return XCTFail("An expired access token with a refresh token must be recoverable")
         }
-        XCTAssertEqual(refreshToken, "refresh-token")
+        XCTAssertEqual(credential.refreshToken, "refresh-token")
+        XCTAssertEqual(credential.scopes, ["user:profile"])
     }
 
     func testExpiredCredentialWithoutRefreshTokenIsUnavailable() {

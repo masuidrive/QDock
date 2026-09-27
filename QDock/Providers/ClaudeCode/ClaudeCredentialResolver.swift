@@ -6,9 +6,14 @@ struct ClaudeResolvedAccessToken {
     let refreshToken: String?
 }
 
+struct ClaudeRefreshCredential {
+    let refreshToken: String
+    let scopes: [String]?
+}
+
 enum ClaudeCredentialResolution {
     case accessToken(ClaudeResolvedAccessToken)
-    case refreshRequired(String)
+    case refreshRequired(ClaudeRefreshCredential)
     case unavailable
 }
 
@@ -47,7 +52,12 @@ struct ClaudeCredentialResolver {
 
         for oauth in [fileOAuth, keychainOAuth] {
             if let refreshToken = nonEmpty(oauth?.refreshToken) {
-                return .refreshRequired(refreshToken)
+                return .refreshRequired(
+                    ClaudeRefreshCredential(
+                        refreshToken: refreshToken,
+                        scopes: oauth?.scopes
+                    )
+                )
             }
         }
 

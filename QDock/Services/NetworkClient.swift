@@ -65,6 +65,12 @@ final class NetworkClient {
         return try await execute(request, responseType: T.self)
     }
 
+    /// Send a fully configured request. Used when a provider's wire format
+    /// requires headers or encoding that differ from the shared conveniences.
+    func send<T: Decodable>(_ request: URLRequest, responseType: T.Type) async throws -> T {
+        try await execute(request, responseType: responseType)
+    }
+
     // MARK: - Private
 
     private func execute<T: Decodable>(_ request: URLRequest, responseType: T.Type) async throws -> T {
